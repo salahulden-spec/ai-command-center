@@ -32,9 +32,16 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
+      <Card className="glow-border w-full max-w-sm border bg-card/80 backdrop-blur-sm">
         <CardHeader>
-          <CardTitle>AI Command Center</CardTitle>
+          <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.2em] text-primary">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+            </span>
+            System online
+          </div>
+          <CardTitle className="glow-text text-2xl">AI Command Center</CardTitle>
           <CardDescription>Sign in to continue</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

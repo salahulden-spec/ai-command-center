@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { auth } from "@/lib/firebase/client";
+import { Markdown } from "@/components/chat/markdown";
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
@@ -35,26 +36,42 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-8.5rem)] flex-col gap-4">
-      <ScrollArea className="flex-1 rounded-lg border border-border p-4">
+      <ScrollArea className="glow-border flex-1 rounded-lg border bg-card/40 p-4 backdrop-blur-sm">
         <div className="flex flex-col gap-4">
           {messages.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Send a message to test the AI Gateway connection.
+            <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+              Awaiting input — AI Gateway link ready.
             </p>
           )}
           {messages.map((message) => (
             <div
               key={message.id}
               className={cn(
-                "max-w-2xl rounded-lg px-4 py-2 text-sm",
-                message.role === "user"
-                  ? "self-end bg-primary text-primary-foreground"
-                  : "self-start bg-muted text-foreground"
+                "flex max-w-2xl flex-col gap-1",
+                message.role === "user" ? "self-end items-end" : "self-start items-start"
               )}
             >
-              {message.parts.map((part, i) =>
-                part.type === "text" ? <span key={i}>{part.text}</span> : null
-              )}
+              <span className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
+                {message.role === "user" ? "You" : "Assistant"}
+              </span>
+              <div
+                className={cn(
+                  "rounded-lg px-4 py-2",
+                  message.role === "user"
+                    ? "bg-primary text-primary-foreground text-sm"
+                    : "glow-border border bg-muted/60 text-foreground"
+                )}
+              >
+                {message.parts.map((part, i) =>
+                  part.type === "text" ? (
+                    message.role === "user" ? (
+                      <span key={i}>{part.text}</span>
+                    ) : (
+                      <Markdown key={i} text={part.text} />
+                    )
+                  ) : null
+                )}
+              </div>
             </div>
           ))}
         </div>

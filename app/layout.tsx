@@ -30,7 +30,15 @@ export default function RootLayout({
       lang="en"
       className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col relative">
+        <div
+          aria-hidden
+          className="bg-grid pointer-events-none fixed inset-0 -z-10 [mask-image:radial-gradient(ellipse_80%_60%_at_50%_-10%,black,transparent)]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none fixed left-1/2 top-[-10rem] -z-10 h-[30rem] w-[60rem] -translate-x-1/2 rounded-full bg-primary/10 blur-[120px]"
+        />
         <Providers>
           <TooltipProvider>{children}</TooltipProvider>
           <Toaster />
