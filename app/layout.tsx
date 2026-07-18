@@ -33,11 +33,11 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col relative">
         <div
           aria-hidden
-          className="bg-grid pointer-events-none fixed inset-0 -z-10 [mask-image:radial-gradient(ellipse_80%_60%_at_50%_-10%,black,transparent)]"
+          className="bg-grid pointer-events-none fixed inset-0 -z-10 opacity-60"
         />
         <div
           aria-hidden
-          className="pointer-events-none fixed left-1/2 top-[-10rem] -z-10 h-[30rem] w-[60rem] -translate-x-1/2 rounded-full bg-primary/10 blur-[120px]"
+          className="pointer-events-none fixed left-1/2 top-[-10rem] -z-10 h-[24rem] w-[48rem] -translate-x-1/2 rounded-full bg-primary/8 blur-[80px]"
         />
         <Providers>
           <TooltipProvider>{children}</TooltipProvider>

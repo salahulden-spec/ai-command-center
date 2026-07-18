@@ -80,7 +80,7 @@ export default function PeoplePage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {people.map((person) => (
-            <Card key={person.id} className="glow-border border bg-card/60 backdrop-blur-sm">
+            <Card key={person.id} className="glow-border border bg-card/90">
               <CardHeader className="flex flex-row items-start justify-between gap-2">
                 <CardTitle className="text-base">{person.name}</CardTitle>
                 <button

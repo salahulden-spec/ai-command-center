@@ -92,7 +92,7 @@ export default function ProjectsPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`}>
-              <Card className="glow-border h-full border bg-card/60 backdrop-blur-sm transition-colors hover:bg-card/90">
+              <Card className="glow-border h-full border bg-card/90 transition-colors hover:bg-card">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">{project.name}</CardTitle>

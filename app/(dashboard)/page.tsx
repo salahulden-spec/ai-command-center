@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 function StatCard({ href, label, value, hint }: { href: string; label: string; value: number; hint: string }) {
   return (
     <Link href={href}>
-      <Card className="glow-border h-full border bg-card/60 backdrop-blur-sm transition-colors hover:bg-card/90">
+      <Card className="glow-border h-full border bg-card/90 transition-colors hover:bg-card">
         <CardHeader>
           <CardDescription className="font-mono text-[0.65rem] uppercase tracking-widest">
             {label}

@@ -36,7 +36,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-8.5rem)] flex-col gap-4">
-      <ScrollArea className="glow-border flex-1 rounded-lg border bg-card/40 p-4 backdrop-blur-sm">
+      <ScrollArea className="glow-border flex-1 rounded-lg border bg-card/50 p-4">
         <div className="flex flex-col gap-4">
           {messages.length === 0 && (
             <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
