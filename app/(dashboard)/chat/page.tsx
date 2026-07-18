@@ -1,18 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { auth } from "@/lib/firebase/client";
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
-  const { messages, sendMessage, status } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
-  });
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        headers: async (): Promise<Record<string, string>> => {
+          const token = await auth.currentUser?.getIdToken();
+          return token ? { Authorization: `Bearer ${token}` } : {};
+        },
+      }),
+    []
+  );
+  const { messages, sendMessage, status } = useChat({ transport });
 
   const isBusy = status === "submitted" || status === "streaming";
 
