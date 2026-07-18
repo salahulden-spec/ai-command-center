@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,7 +30,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
-        <span className="font-medium">AI Command Center</span>
+        <nav className="flex items-center gap-4">
+          <span className="font-medium">AI Command Center</span>
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+            Home
+          </Link>
+          <Link href="/chat" className="text-sm text-muted-foreground hover:text-foreground">
+            Chat
+          </Link>
+        </nav>
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
           <span>{user.email}</span>
           <Button variant="outline" size="sm" onClick={() => void signOut()}>
