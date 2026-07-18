@@ -61,6 +61,23 @@ const tools = {
       reminderText: z.string().describe("The reminder's text, for display in the confirmation UI"),
     }),
   }),
+  saveMemory: tool({
+    description:
+      "Save a durable fact, preference, decision, or note about a person/company to long-term memory, for recall in future conversations. Only call this for things worth remembering long-term (e.g. \"I prefer dark mode\", \"my dentist's number is X\", \"we decided to launch in March\") — not for routine task/project chatter that's already captured elsewhere.",
+    inputSchema: z.object({
+      type: z
+        .enum(["fact", "preference", "person", "company", "decision"])
+        .describe("What kind of memory this is"),
+      content: z.string().describe("The memory itself, written as a standalone statement"),
+    }),
+  }),
+  searchMemory: tool({
+    description:
+      "Search long-term memory for facts, preferences, decisions, or notes relevant to a query. Read-only, always runs immediately. Use this when the user asks you to recall something from before (e.g. \"what did we decide about X\", \"do you remember...\") — never assume memory content without searching first.",
+    inputSchema: z.object({
+      query: z.string().describe("What to search for, in natural language"),
+    }),
+  }),
 };
 
 function buildSystemPrompt() {
@@ -71,7 +88,8 @@ When creating a reminder, output dueAt as a plain ISO 8601 local date-time witho
 You can create projects, tasks, and reminders, and mark tasks/reminders complete, using the available tools when the user asks you to.
 The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-only and always run immediately — use them freely to look up real IDs before referencing a project, task, or reminder by name.
 CRITICAL: IDs are opaque random Firestore strings (e.g. "e3QIlmSjbpg46UHWRt0Q") — never construct, guess, or slugify one from a name (e.g. "websiteRedesignId" is never valid). If a task requires an existing project/task/reminder's ID and you have not just seen it in an actual tool result, call the matching list* tool FIRST, wait for its real output, and only then call the mutating tool with the exact id string from that result — do not call the lookup and the action that depends on it in the same step.
-Every create/complete tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
+Every create/complete/saveMemory tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
+Long-term memory: use searchMemory only when the user is explicitly asking you to recall or reference something from before — never search or inject memory automatically into unrelated requests, and never assume something is true from memory without having actually searched for it in this conversation. Use saveMemory when the user shares something clearly durable (a standing preference, a fixed fact, a decision) — not for routine task/project updates that already live in their own records.
 Keep responses concise and practical.`;
 }
 

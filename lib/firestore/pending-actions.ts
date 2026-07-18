@@ -14,6 +14,8 @@ import type { PendingAction, PendingActionType } from "@/types";
 import { createProject } from "./projects";
 import { createTask, updateTaskStatus } from "./tasks";
 import { createReminder, markReminderDone } from "./reminders";
+import { createMemory } from "./memory";
+import type { MemoryType } from "@/types";
 
 const converter = makeConverter<PendingAction>();
 
@@ -66,6 +68,15 @@ export async function approvePendingAction(action: PendingAction) {
     case "completeReminder": {
       const { reminderId } = action.payload as { reminderId: string };
       await markReminderDone(reminderId);
+      break;
+    }
+    case "saveMemory": {
+      const { type, content, embedding } = action.payload as {
+        type: MemoryType;
+        content: string;
+        embedding: number[];
+      };
+      await createMemory({ type, content, embedding, source: "ai" });
       break;
     }
   }

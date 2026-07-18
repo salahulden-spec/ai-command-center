@@ -33,9 +33,16 @@ import {
   markReminderDone,
   listPendingRemindersOnce,
 } from "@/lib/firestore/reminders";
-import type { AiMode, PendingActionType } from "@/types";
+import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
+import { embedText } from "@/lib/ai/embed-client";
+import type { AiMode, MemoryType, PendingActionType } from "@/types";
 
-const READ_TOOLS = new Set(["listProjects", "listOpenTasks", "listPendingReminders"]);
+const READ_TOOLS = new Set([
+  "listProjects",
+  "listOpenTasks",
+  "listPendingReminders",
+  "searchMemory",
+]);
 
 /**
  * The model can hallucinate plausible-looking IDs (e.g. a slug like
@@ -83,6 +90,8 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Mark task "${input.taskTitle}" as done`;
     case "completeReminder":
       return `Mark reminder "${input.reminderText}" as done`;
+    case "saveMemory":
+      return `Remember: "${input.content}"`;
     default:
       return toolName;
   }
@@ -146,6 +155,21 @@ export default function ChatPage() {
               text: r.text,
               dueAt: r.dueAt.toDate().toISOString(),
             }));
+          } else if (toolName === "searchMemory") {
+            const { query } = toolInput as { query: string };
+            const [queryEmbedding, memories] = await Promise.all([
+              embedText(query),
+              listMemoriesOnce(),
+            ]);
+            output = memories
+              .map((m) => ({
+                type: m.type,
+                content: m.content,
+                score: cosineSimilarity(queryEmbedding, m.embedding),
+              }))
+              .sort((a, b) => b.score - a.score)
+              .slice(0, 5)
+              .filter((m) => m.score > 0.3);
           }
           addToolResult({ tool: toolName, toolCallId, output });
         } catch {
@@ -162,31 +186,51 @@ export default function ChatPage() {
         return;
       }
 
+      // saveMemory needs an embedding computed up front so it can be
+      // included whether the action executes immediately or gets queued.
+      let mutationPayload = toolInput;
+      if (mutationType === "saveMemory") {
+        const { content } = toolInput as { content: string };
+        const embedding = await embedText(content);
+        mutationPayload = { ...toolInput, embedding };
+      }
+
       if (aiMode === "execute") {
         try {
           if (mutationType === "createProject") {
-            await createProject(toolInput as { name: string; description: string });
+            await createProject(mutationPayload as { name: string; description: string });
           } else if (mutationType === "createTask") {
-            await createTask(toolInput as { title: string; projectId: string | null });
+            await createTask(mutationPayload as { title: string; projectId: string | null });
           } else if (mutationType === "createReminder") {
-            const { text, dueAt } = toolInput as { text: string; dueAt: string };
+            const { text, dueAt } = mutationPayload as { text: string; dueAt: string };
             await createReminder({ text, dueAt: new Date(dueAt) });
           } else if (mutationType === "completeTask") {
-            const { taskId, projectId } = toolInput as {
+            const { taskId, projectId } = mutationPayload as {
               taskId: string;
               projectId: string | null;
             };
             await updateTaskStatus(projectId, taskId, "done");
           } else if (mutationType === "completeReminder") {
-            const { reminderId } = toolInput as { reminderId: string };
+            const { reminderId } = mutationPayload as { reminderId: string };
             await markReminderDone(reminderId);
+          } else if (mutationType === "saveMemory") {
+            const { type, content, embedding } = mutationPayload as {
+              type: MemoryType;
+              content: string;
+              embedding: number[];
+            };
+            await createMemory({ type, content, embedding, source: "ai" });
           }
           addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
         } catch {
           addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
         }
       } else {
-        await queuePendingAction(mutationType, summarizeAction(toolName, toolInput), toolInput);
+        await queuePendingAction(
+          mutationType,
+          summarizeAction(toolName, toolInput),
+          mutationPayload
+        );
         addToolResult({
           tool: toolName,
           toolCallId,

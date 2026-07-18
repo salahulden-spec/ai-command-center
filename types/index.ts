@@ -64,12 +64,25 @@ export interface UserSettings {
   aiMode: AiMode;
 }
 
+export type MemoryType = "fact" | "preference" | "person" | "company" | "decision";
+
+export interface Memory {
+  id: string;
+  type: MemoryType;
+  content: string;
+  embedding: number[];
+  relatedProjectId: string | null;
+  source: "manual" | "ai";
+  createdAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"
   | "createReminder"
   | "completeTask"
-  | "completeReminder";
+  | "completeReminder"
+  | "saveMemory";
 export type PendingActionStatus = "pending" | "approved" | "rejected";
 
 export interface PendingAction {
