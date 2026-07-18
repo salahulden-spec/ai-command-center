@@ -31,10 +31,15 @@ const tools = {
   }),
 };
 
-const SYSTEM_PROMPT = `You are the assistant inside AI Command Center, the user's private executive assistant app.
+function buildSystemPrompt() {
+  const now = new Date();
+  return `You are the assistant inside AI Command Center, the user's private executive assistant app.
+The current date and time is ${now.toISOString()} (${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}). Use this as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "next Friday") — never guess or assume a different year.
+When creating a reminder, output dueAt as a plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), reflecting the user's own wall-clock time, not UTC.
 You can create projects, tasks, and reminders using the available tools when the user asks you to.
 Every tool call is queued for the user's review before anything is actually created unless they've enabled auto-execute mode — after calling a tool, briefly confirm what you did in plain language.
 Keep responses concise and practical.`;
+}
 
 export async function POST(req: Request) {
   const isOwner = await verifyOwnerIdToken(req.headers.get("authorization"));
@@ -46,7 +51,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: "anthropic/claude-sonnet-4.6",
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(),
     messages: await convertToModelMessages(messages),
     tools,
   });
