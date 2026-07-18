@@ -11,10 +11,12 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.34",
     "@base-ui/react": "^1.6.0",
+    "@types/d3-force": "^3.0.10",
     "ai": "^7.0.31",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "d3-force": "^3.0.0",
     "firebase": "^12.16.0",
     "jose": "^6.2.3",
     "lucide-react": "^1.25.0",

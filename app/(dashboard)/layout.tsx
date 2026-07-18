@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { href: "/inbox", label: "Inbox" },
   { href: "/people", label: "People" },
   { href: "/reminders", label: "Reminders" },
+  { href: "/mind", label: "Mind View" },
   { href: "/chat", label: "Chat" },
 ];
 
