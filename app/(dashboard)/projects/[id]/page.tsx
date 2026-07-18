@@ -103,7 +103,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete project?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This deletes &quot;{project.name}&quot;. Tasks inside it are not automatically removed.
+                  This permanently deletes &quot;{project.name}&quot; and all of its tasks.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

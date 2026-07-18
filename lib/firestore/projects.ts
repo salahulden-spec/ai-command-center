@@ -5,6 +5,7 @@ import {
   updateDoc,
   deleteDoc,
   getDocs,
+  writeBatch,
   serverTimestamp,
   orderBy,
   query,
@@ -49,8 +50,21 @@ export async function updateProject(
   });
 }
 
+/**
+ * Deleting a project must also delete its tasks subcollection —
+ * Firestore never cascade-deletes subcollections on its own, and a
+ * leftover task with a projectId pointing at a deleted project becomes
+ * a dangling reference (breaks Mind View's graph edges, pollutes
+ * listOpenTasks, etc).
+ */
 export async function deleteProject(projectId: string) {
-  return deleteDoc(doc(db, "projects", projectId));
+  const tasksSnap = await getDocs(collection(db, "projects", projectId, "tasks"));
+  const batch = writeBatch(db);
+  for (const taskDoc of tasksSnap.docs) {
+    batch.delete(taskDoc.ref);
+  }
+  batch.delete(doc(db, "projects", projectId));
+  return batch.commit();
 }
 
 export async function listProjectsOnce() {

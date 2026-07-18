@@ -76,7 +76,17 @@ export default function MindViewPage() {
       }
     }
 
-    return { nodes, links };
+    // Drop links pointing at a node that doesn't exist (e.g. a task whose
+    // project was deleted but the task's projectId still references it —
+    // deleting a project doesn't cascade-delete its tasks). d3-force's
+    // forceLink throws if a link references a missing node id, which would
+    // otherwise crash this page outright.
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const validLinks = links.filter(
+      (link) => nodeIds.has(link.source) && nodeIds.has(link.target)
+    );
+
+    return { nodes, links: validLinks };
   }, [projects, tasks, people, reminders]);
 
   const [positioned, setPositioned] = useState<GraphNode[]>([]);
