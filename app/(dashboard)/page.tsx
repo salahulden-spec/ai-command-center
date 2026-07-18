@@ -74,7 +74,7 @@ export default function DashboardPage() {
   const statusText =
     totalPending === 0
       ? "Everything is under control."
-      : `${totalPending} thing${totalPending === 1 ? "" : "s"} need your attention.`;
+      : `${totalPending} thing${totalPending === 1 ? "" : "s"} need${totalPending === 1 ? "s" : ""} your attention.`;
 
   const firstName = user?.displayName?.split(" ")[0] || user?.email?.split("@")[0] || "";
 
