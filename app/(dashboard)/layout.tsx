@@ -10,6 +10,10 @@ import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
+  { href: "/projects", label: "Projects" },
+  { href: "/inbox", label: "Inbox" },
+  { href: "/people", label: "People" },
+  { href: "/reminders", label: "Reminders" },
   { href: "/chat", label: "Chat" },
 ];
 
@@ -43,7 +47,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </span>
           <div className="flex items-center gap-4">
             {NAV_LINKS.map((link) => {
-              const active = pathname === link.href;
+              const active =
+                link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
               return (
                 <Link
                   key={link.href}
