@@ -37,6 +37,40 @@ import type { AiMode, PendingActionType } from "@/types";
 
 const READ_TOOLS = new Set(["listProjects", "listOpenTasks", "listPendingReminders"]);
 
+/**
+ * The model can hallucinate plausible-looking IDs (e.g. a slug like
+ * "websiteRedesignId" instead of a real Firestore auto-ID) instead of
+ * using the exact id from a prior list* tool result — this happens when
+ * it calls a lookup and a mutation in the same step without actually
+ * waiting on the lookup's real output. Never trust a referenced ID
+ * without checking it exists first; on mismatch, return an error the
+ * model can use to retry instead of silently writing to a bogus path.
+ */
+async function validateReference(
+  toolName: string,
+  toolInput: Record<string, unknown>
+): Promise<string | null> {
+  if (toolName === "createTask" && toolInput.projectId) {
+    const projects = await listProjectsOnce();
+    if (!projects.some((p) => p.id === toolInput.projectId)) {
+      return `No project exists with id "${toolInput.projectId}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
+    }
+  }
+  if (toolName === "completeTask") {
+    const tasks = await listOpenTasksOnce();
+    if (!tasks.some((t) => t.id === toolInput.taskId)) {
+      return `No open task exists with id "${toolInput.taskId}". Call listOpenTasks and use one of the exact ids it returns.`;
+    }
+  }
+  if (toolName === "completeReminder") {
+    const reminders = await listPendingRemindersOnce();
+    if (!reminders.some((r) => r.id === toolInput.reminderId)) {
+      return `No pending reminder exists with id "${toolInput.reminderId}". Call listPendingReminders and use one of the exact ids it returns.`;
+    }
+  }
+  return null;
+}
+
 function summarizeAction(toolName: string, input: Record<string, unknown>): string {
   switch (toolName) {
     case "createProject":
@@ -121,6 +155,12 @@ export default function ChatPage() {
       }
 
       const mutationType = toolName as PendingActionType;
+
+      const referenceError = await validateReference(toolName, toolInput);
+      if (referenceError) {
+        addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
+        return;
+      }
 
       if (aiMode === "execute") {
         try {
