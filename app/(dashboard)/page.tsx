@@ -57,7 +57,7 @@ export default function DashboardPage() {
           hint={`${projects.length} total`}
         />
         <StatCard
-          href="/projects"
+          href="/tasks"
           label="Open tasks"
           value={openTasks.length}
           hint={`${tasks.length} total`}

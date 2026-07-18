@@ -59,7 +59,7 @@ export default function MindViewPage() {
         id: nodeId,
         type: "task",
         label: task.title,
-        href: task.projectId ? `/projects/${task.projectId}` : "/projects",
+        href: task.projectId ? `/projects/${task.projectId}` : "/tasks",
       });
       if (task.projectId) {
         links.push({ source: nodeId, target: `project-${task.projectId}` });

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 const NAV_LINKS = [
   { href: "/", label: "Home" },
   { href: "/projects", label: "Projects" },
+  { href: "/tasks", label: "Tasks" },
   { href: "/inbox", label: "Inbox" },
   { href: "/people", label: "People" },
   { href: "/reminders", label: "Reminders" },
