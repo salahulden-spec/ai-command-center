@@ -4,9 +4,11 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  getDocs,
   serverTimestamp,
   Timestamp,
   orderBy,
+  where,
   query,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
@@ -39,4 +41,12 @@ export async function markReminderDone(reminderId: string) {
 
 export async function deleteReminder(reminderId: string) {
   return deleteDoc(doc(db, "reminders", reminderId));
+}
+
+/** All pending reminders, for the AI to reference (e.g. to mark one done by description). */
+export async function listPendingRemindersOnce() {
+  const snap = await getDocs(
+    query(collection(db, "reminders").withConverter(converter), where("status", "==", "pending"))
+  );
+  return snap.docs.map((d) => d.data());
 }

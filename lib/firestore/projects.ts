@@ -4,6 +4,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  getDocs,
   serverTimestamp,
   orderBy,
   query,
@@ -50,4 +51,9 @@ export async function updateProject(
 
 export async function deleteProject(projectId: string) {
   return deleteDoc(doc(db, "projects", projectId));
+}
+
+export async function listProjectsOnce() {
+  const snap = await getDocs(projectsQuery());
+  return snap.docs.map((d) => d.data());
 }

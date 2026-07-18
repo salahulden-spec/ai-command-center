@@ -26,10 +26,16 @@ import {
   approvePendingAction,
   rejectPendingAction,
 } from "@/lib/firestore/pending-actions";
-import { createProject } from "@/lib/firestore/projects";
-import { createTask } from "@/lib/firestore/tasks";
-import { createReminder } from "@/lib/firestore/reminders";
+import { createProject, listProjectsOnce } from "@/lib/firestore/projects";
+import { createTask, updateTaskStatus, listOpenTasksOnce } from "@/lib/firestore/tasks";
+import {
+  createReminder,
+  markReminderDone,
+  listPendingRemindersOnce,
+} from "@/lib/firestore/reminders";
 import type { AiMode, PendingActionType } from "@/types";
+
+const READ_TOOLS = new Set(["listProjects", "listOpenTasks", "listPendingReminders"]);
 
 function summarizeAction(toolName: string, input: Record<string, unknown>): string {
   switch (toolName) {
@@ -39,6 +45,10 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Create task "${input.title}"`;
     case "createReminder":
       return `Remind: "${input.text}"`;
+    case "completeTask":
+      return `Mark task "${input.taskTitle}" as done`;
+    case "completeReminder":
+      return `Mark reminder "${input.reminderText}" as done`;
     default:
       return toolName;
   }
@@ -76,26 +86,67 @@ export default function ChatPage() {
     onToolCall: async ({ toolCall }) => {
       const { toolCallId, toolName, input: toolInput } = toolCall as {
         toolCallId: string;
-        toolName: PendingActionType;
+        toolName: string;
         input: Record<string, unknown>;
       };
 
+      if (READ_TOOLS.has(toolName)) {
+        try {
+          let output: unknown;
+          if (toolName === "listProjects") {
+            output = (await listProjectsOnce()).map((p) => ({
+              id: p.id,
+              name: p.name,
+              status: p.status,
+            }));
+          } else if (toolName === "listOpenTasks") {
+            output = (await listOpenTasksOnce()).map((t) => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              projectId: t.projectId,
+            }));
+          } else if (toolName === "listPendingReminders") {
+            output = (await listPendingRemindersOnce()).map((r) => ({
+              id: r.id,
+              text: r.text,
+              dueAt: r.dueAt.toDate().toISOString(),
+            }));
+          }
+          addToolResult({ tool: toolName, toolCallId, output });
+        } catch {
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
+        }
+        return;
+      }
+
+      const mutationType = toolName as PendingActionType;
+
       if (aiMode === "execute") {
         try {
-          if (toolName === "createProject") {
+          if (mutationType === "createProject") {
             await createProject(toolInput as { name: string; description: string });
-          } else if (toolName === "createTask") {
+          } else if (mutationType === "createTask") {
             await createTask(toolInput as { title: string; projectId: string | null });
-          } else if (toolName === "createReminder") {
+          } else if (mutationType === "createReminder") {
             const { text, dueAt } = toolInput as { text: string; dueAt: string };
             await createReminder({ text, dueAt: new Date(dueAt) });
+          } else if (mutationType === "completeTask") {
+            const { taskId, projectId } = toolInput as {
+              taskId: string;
+              projectId: string | null;
+            };
+            await updateTaskStatus(projectId, taskId, "done");
+          } else if (mutationType === "completeReminder") {
+            const { reminderId } = toolInput as { reminderId: string };
+            await markReminderDone(reminderId);
           }
-          addToolResult({ tool: toolName, toolCallId, output: "Done — created directly." });
+          addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
         } catch {
-          addToolResult({ tool: toolName, toolCallId, output: "Failed to create." });
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
         }
       } else {
-        await queuePendingAction(toolName, summarizeAction(toolName, toolInput), toolInput);
+        await queuePendingAction(mutationType, summarizeAction(toolName, toolInput), toolInput);
         addToolResult({
           tool: toolName,
           toolCallId,

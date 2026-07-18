@@ -5,6 +5,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  getDocs,
   serverTimestamp,
   orderBy,
   query,
@@ -62,4 +63,12 @@ export async function updateTaskStatus(
 
 export async function deleteTask(projectId: string | null, taskId: string) {
   return deleteDoc(doc(tasksCollection(projectId), taskId));
+}
+
+/** All open (not done) tasks across standalone + every project, for the AI to reference. */
+export async function listOpenTasksOnce() {
+  const snap = await getDocs(allTasksQuery());
+  return snap.docs
+    .map((d) => d.data())
+    .filter((t) => t.status !== "done");
 }

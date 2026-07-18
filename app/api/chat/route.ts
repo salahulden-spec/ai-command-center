@@ -29,6 +29,38 @@ const tools = {
       dueAt: z.string().describe("ISO 8601 date-time when the reminder is due"),
     }),
   }),
+  listProjects: tool({
+    description:
+      "List the user's existing projects (id, name, status). Call this before creating a task that should attach to a project, so you can resolve the project name the user mentions to its real ID — never invent a project ID.",
+    inputSchema: z.object({}),
+  }),
+  listOpenTasks: tool({
+    description:
+      "List the user's open (not-done) tasks across all projects and standalone tasks, so you can find the right task when the user asks to complete or reference one by description.",
+    inputSchema: z.object({}),
+  }),
+  listPendingReminders: tool({
+    description: "List the user's pending (not-done) reminders.",
+    inputSchema: z.object({}),
+  }),
+  completeTask: tool({
+    description: "Mark an existing task as done. Look it up with listOpenTasks first.",
+    inputSchema: z.object({
+      taskId: z.string().describe("The task's Firestore ID, from listOpenTasks"),
+      projectId: z
+        .string()
+        .nullable()
+        .describe("The task's projectId as returned by listOpenTasks, or null if standalone"),
+      taskTitle: z.string().describe("The task's title, for display in the confirmation UI"),
+    }),
+  }),
+  completeReminder: tool({
+    description: "Mark an existing reminder as done. Look it up with listPendingReminders first.",
+    inputSchema: z.object({
+      reminderId: z.string().describe("The reminder's Firestore ID, from listPendingReminders"),
+      reminderText: z.string().describe("The reminder's text, for display in the confirmation UI"),
+    }),
+  }),
 };
 
 function buildSystemPrompt() {
@@ -36,8 +68,9 @@ function buildSystemPrompt() {
   return `You are the assistant inside AI Command Center, the user's private executive assistant app.
 The current date and time is ${now.toISOString()} (${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}). Use this as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "next Friday") — never guess or assume a different year.
 When creating a reminder, output dueAt as a plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), reflecting the user's own wall-clock time, not UTC.
-You can create projects, tasks, and reminders using the available tools when the user asks you to.
-Every tool call is queued for the user's review before anything is actually created unless they've enabled auto-execute mode — after calling a tool, briefly confirm what you did in plain language.
+You can create projects, tasks, and reminders, and mark tasks/reminders complete, using the available tools when the user asks you to.
+The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-only and always run immediately — use them freely to look up real IDs before referencing a project, task, or reminder by name. Never invent an ID.
+Every create/complete tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
 Keep responses concise and practical.`;
 }
 

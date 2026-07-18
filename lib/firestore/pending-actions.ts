@@ -12,8 +12,8 @@ import { db } from "@/lib/firebase/client";
 import { makeConverter } from "./converter";
 import type { PendingAction, PendingActionType } from "@/types";
 import { createProject } from "./projects";
-import { createTask } from "./tasks";
-import { createReminder } from "./reminders";
+import { createTask, updateTaskStatus } from "./tasks";
+import { createReminder, markReminderDone } from "./reminders";
 
 const converter = makeConverter<PendingAction>();
 
@@ -53,6 +53,19 @@ export async function approvePendingAction(action: PendingAction) {
     case "createReminder": {
       const { text, dueAt } = action.payload as { text: string; dueAt: string };
       await createReminder({ text, dueAt: new Date(dueAt) });
+      break;
+    }
+    case "completeTask": {
+      const { taskId, projectId } = action.payload as {
+        taskId: string;
+        projectId: string | null;
+      };
+      await updateTaskStatus(projectId, taskId, "done");
+      break;
+    }
+    case "completeReminder": {
+      const { reminderId } = action.payload as { reminderId: string };
+      await markReminderDone(reminderId);
       break;
     }
   }

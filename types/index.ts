@@ -64,7 +64,12 @@ export interface UserSettings {
   aiMode: AiMode;
 }
 
-export type PendingActionType = "createProject" | "createTask" | "createReminder";
+export type PendingActionType =
+  | "createProject"
+  | "createTask"
+  | "createReminder"
+  | "completeTask"
+  | "completeReminder";
 export type PendingActionStatus = "pending" | "approved" | "rejected";
 
 export interface PendingAction {
