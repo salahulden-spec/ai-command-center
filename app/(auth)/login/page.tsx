@@ -22,8 +22,9 @@ export default function LoginPage() {
     setError(null);
     try {
       await signInWithGoogle();
-    } catch {
-      setError("Sign-in failed. Please try again.");
+    } catch (err) {
+      const code = err instanceof Error && "code" in err ? String((err as { code: unknown }).code) : undefined;
+      setError(code ? `Sign-in failed: ${code}` : "Sign-in failed. Please try again.");
     }
   };
 
