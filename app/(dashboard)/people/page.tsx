@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useCollection } from "@/hooks/use-collection";
 import { peopleQuery, createPerson, deletePerson } from "@/lib/firestore/people";
@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/dialog";
 
 export default function PeoplePage() {
-  const { data: people, loading } = useCollection(peopleQuery());
+  const { data: people, loading } = useCollection(useMemo(() => peopleQuery(), []));
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");

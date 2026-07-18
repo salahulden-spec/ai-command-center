@@ -39,10 +39,10 @@ const HEIGHT = 640;
 
 export default function MindViewPage() {
   const router = useRouter();
-  const { data: projects, loading: loadingProjects } = useCollection(projectsQuery());
-  const { data: tasks, loading: loadingTasks } = useCollection(allTasksQuery());
-  const { data: people, loading: loadingPeople } = useCollection(peopleQuery());
-  const { data: reminders, loading: loadingReminders } = useCollection(remindersQuery());
+  const { data: projects, loading: loadingProjects } = useCollection(useMemo(() => projectsQuery(), []));
+  const { data: tasks, loading: loadingTasks } = useCollection(useMemo(() => allTasksQuery(), []));
+  const { data: people, loading: loadingPeople } = useCollection(useMemo(() => peopleQuery(), []));
+  const { data: reminders, loading: loadingReminders } = useCollection(useMemo(() => remindersQuery(), []));
 
   const loading = loadingProjects || loadingTasks || loadingPeople || loadingReminders;
 

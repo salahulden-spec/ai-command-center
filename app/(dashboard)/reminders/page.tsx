@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useCollection } from "@/hooks/use-collection";
 import { remindersQuery, createReminder, markReminderDone, deleteReminder } from "@/lib/firestore/reminders";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 
 export default function RemindersPage() {
-  const { data: reminders, loading } = useCollection(remindersQuery());
+  const { data: reminders, loading } = useCollection(useMemo(() => remindersQuery(), []));
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [dueAt, setDueAt] = useState("");

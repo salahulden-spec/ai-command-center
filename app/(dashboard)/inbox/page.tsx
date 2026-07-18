@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { X, Check } from "lucide-react";
 import { useCollection } from "@/hooks/use-collection";
 import { inboxQuery, createInboxItem, markInboxItemOrganized, deleteInboxItem } from "@/lib/firestore/inbox";
@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function InboxPage() {
-  const { data: items, loading } = useCollection(inboxQuery());
+  const { data: items, loading } = useCollection(useMemo(() => inboxQuery(), []));
   const [content, setContent] = useState("");
 
   const handleCapture = async () => {

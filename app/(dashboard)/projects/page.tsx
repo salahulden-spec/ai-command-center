@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useCollection } from "@/hooks/use-collection";
 import { projectsQuery, createProject } from "@/lib/firestore/projects";
@@ -21,7 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 
 export default function ProjectsPage() {
-  const { data: projects, loading } = useCollection(projectsQuery());
+  const { data: projects, loading } = useCollection(useMemo(() => projectsQuery(), []));
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

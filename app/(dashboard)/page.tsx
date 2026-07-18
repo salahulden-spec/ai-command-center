@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
@@ -27,10 +28,10 @@ function StatCard({ href, label, value, hint }: { href: string; label: string; v
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { data: projects } = useCollection(projectsQuery());
-  const { data: tasks } = useCollection(allTasksQuery());
-  const { data: inbox } = useCollection(inboxQuery());
-  const { data: reminders } = useCollection(remindersQuery());
+  const { data: projects } = useCollection(useMemo(() => projectsQuery(), []));
+  const { data: tasks } = useCollection(useMemo(() => allTasksQuery(), []));
+  const { data: inbox } = useCollection(useMemo(() => inboxQuery(), []));
+  const { data: reminders } = useCollection(useMemo(() => remindersQuery(), []));
 
   const activeProjects = projects.filter((p) => p.status === "active");
   const openTasks = tasks.filter((t) => t.status !== "done");

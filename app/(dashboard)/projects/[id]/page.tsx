@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { onSnapshot } from "firebase/firestore";
 import { useCollection } from "@/hooks/use-collection";
 import { projectRef, updateProject, deleteProject } from "@/lib/firestore/projects";
@@ -37,7 +37,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
-  const { data: tasks } = useCollection(tasksQuery(id));
+  const { data: tasks } = useCollection(useMemo(() => tasksQuery(id), [id]));
   const [newTask, setNewTask] = useState("");
 
   useEffect(() => {
