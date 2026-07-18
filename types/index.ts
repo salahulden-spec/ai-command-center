@@ -57,3 +57,21 @@ export interface Person {
   notes: string;
   createdAt: Timestamp;
 }
+
+export type AiMode = "ask" | "execute";
+
+export interface UserSettings {
+  aiMode: AiMode;
+}
+
+export type PendingActionType = "createProject" | "createTask" | "createReminder";
+export type PendingActionStatus = "pending" | "approved" | "rejected";
+
+export interface PendingAction {
+  id: string;
+  actionType: PendingActionType;
+  summary: string;
+  payload: Record<string, unknown>;
+  status: PendingActionStatus;
+  createdAt: Timestamp;
+}

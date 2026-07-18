@@ -1,17 +1,63 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { onSnapshot } from "firebase/firestore";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { auth } from "@/lib/firebase/client";
 import { Markdown } from "@/components/chat/markdown";
+import { useAuth } from "@/hooks/use-auth";
+import { useCollection } from "@/hooks/use-collection";
+import { userSettingsRef, setAiMode } from "@/lib/firestore/user-settings";
+import {
+  pendingActionsQuery,
+  queuePendingAction,
+  approvePendingAction,
+  rejectPendingAction,
+} from "@/lib/firestore/pending-actions";
+import { createProject } from "@/lib/firestore/projects";
+import { createTask } from "@/lib/firestore/tasks";
+import { createReminder } from "@/lib/firestore/reminders";
+import type { AiMode, PendingActionType } from "@/types";
+
+function summarizeAction(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case "createProject":
+      return `Create project "${input.name}"`;
+    case "createTask":
+      return `Create task "${input.title}"`;
+    case "createReminder":
+      return `Remind: "${input.text}"`;
+    default:
+      return toolName;
+  }
+}
 
 export default function ChatPage() {
+  const { user } = useAuth();
   const [input, setInput] = useState("");
+  const [aiMode, setLocalAiMode] = useState<AiMode>("ask");
+
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(userSettingsRef(user.uid), (snap) => {
+      setLocalAiMode(snap.data()?.aiMode ?? "ask");
+    });
+  }, [user]);
+
+  const { data: pendingActions } = useCollection(useMemo(() => pendingActionsQuery(), []));
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -23,7 +69,41 @@ export default function ChatPage() {
       }),
     []
   );
-  const { messages, sendMessage, status } = useChat({ transport });
+
+  const { messages, sendMessage, status, addToolResult } = useChat({
+    transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onToolCall: async ({ toolCall }) => {
+      const { toolCallId, toolName, input: toolInput } = toolCall as {
+        toolCallId: string;
+        toolName: PendingActionType;
+        input: Record<string, unknown>;
+      };
+
+      if (aiMode === "execute") {
+        try {
+          if (toolName === "createProject") {
+            await createProject(toolInput as { name: string; description: string });
+          } else if (toolName === "createTask") {
+            await createTask(toolInput as { title: string; projectId: string | null });
+          } else if (toolName === "createReminder") {
+            const { text, dueAt } = toolInput as { text: string; dueAt: string };
+            await createReminder({ text, dueAt: new Date(dueAt) });
+          }
+          addToolResult({ tool: toolName, toolCallId, output: "Done — created directly." });
+        } catch {
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to create." });
+        }
+      } else {
+        await queuePendingAction(toolName, summarizeAction(toolName, toolInput), toolInput);
+        addToolResult({
+          tool: toolName,
+          toolCallId,
+          output: "Queued for your approval — see Pending Actions.",
+        });
+      }
+    },
+  });
 
   const isBusy = status === "submitted" || status === "streaming";
 
@@ -36,6 +116,50 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-[calc(100vh-8.5rem)] flex-col gap-4">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Chat</span>
+        <Select
+          value={aiMode}
+          onValueChange={(mode) => user && void setAiMode(user.uid, mode as AiMode)}
+        >
+          <SelectTrigger className="w-44 font-mono text-xs uppercase">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ask">Ask before acting</SelectItem>
+            <SelectItem value="execute">Auto-execute</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {pendingActions.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h2 className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
+            Pending Actions
+          </h2>
+          {pendingActions.map((action) => (
+            <div
+              key={action.id}
+              className="glow-border flex items-center justify-between rounded-md border bg-card/60 px-3 py-2"
+            >
+              <span className="text-sm">{action.summary}</span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={() => void approvePendingAction(action)}>
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void rejectPendingAction(action.id)}
+                >
+                  Reject
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <ScrollArea className="glow-border flex-1 rounded-lg border bg-card/50 p-4">
         <div className="flex flex-col gap-4">
           {messages.length === 0 && (
@@ -62,15 +186,26 @@ export default function ChatPage() {
                     : "glow-border border bg-muted/60 text-foreground"
                 )}
               >
-                {message.parts.map((part, i) =>
-                  part.type === "text" ? (
-                    message.role === "user" ? (
+                {message.parts.map((part, i) => {
+                  if (part.type === "text") {
+                    return message.role === "user" ? (
                       <span key={i}>{part.text}</span>
                     ) : (
                       <Markdown key={i} text={part.text} />
-                    )
-                  ) : null
-                )}
+                    );
+                  }
+                  if (part.type.startsWith("tool-")) {
+                    return (
+                      <div
+                        key={i}
+                        className="mb-1 font-mono text-[0.65rem] uppercase tracking-widest text-primary"
+                      >
+                        → {part.type.replace("tool-", "")}
+                      </div>
+                    );
+                  }
+                  return null;
+                })}
               </div>
             </div>
           ))}
