@@ -76,6 +76,15 @@ export interface Memory {
   createdAt: Timestamp;
 }
 
+export interface Conversation {
+  id: string;
+  title: string;
+  lastMessagePreview: string;
+  messages: unknown[];
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"

@@ -1,25 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { onSnapshot } from "firebase/firestore";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { auth } from "@/lib/firebase/client";
 import { Markdown } from "@/components/chat/markdown";
 import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
-import { userSettingsRef, setAiMode } from "@/lib/firestore/user-settings";
+import { userSettingsRef } from "@/lib/firestore/user-settings";
 import {
   pendingActionsQuery,
   queuePendingAction,
@@ -35,6 +31,11 @@ import {
 } from "@/lib/firestore/reminders";
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
 import { embedText } from "@/lib/ai/embed-client";
+import {
+  createConversation,
+  updateConversationMessages,
+  getConversationOnce,
+} from "@/lib/firestore/conversations";
 import type { AiMode, MemoryType, PendingActionType } from "@/types";
 
 const READ_TOOLS = new Set([
@@ -98,9 +99,68 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
 }
 
 export default function ChatPage() {
+  return (
+    <Suspense fallback={<Skeleton className="h-[calc(100vh-8.5rem)] w-full" />}>
+      <ChatPageLoader />
+    </Suspense>
+  );
+}
+
+/** Resolves the initial message list (from a past conversation, if ?id= is present) before mounting the actual chat UI — useChat only reads its initial messages once, on mount. */
+function ChatPageLoader() {
+  const searchParams = useSearchParams();
+  const conversationId = searchParams.get("id");
+  const initialText = searchParams.get("q");
+  const [initialMessages, setInitialMessages] = useState<UIMessage[] | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    if (!conversationId) {
+      setInitialMessages([]);
+      setReady(true);
+      return;
+    }
+    getConversationOnce(conversationId).then((messages) => {
+      if (cancelled) return;
+      setInitialMessages(messages ?? []);
+      setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  if (!ready || initialMessages === null) {
+    return <Skeleton className="h-[calc(100vh-8.5rem)] w-full" />;
+  }
+
+  return (
+    <ChatConversation
+      key={conversationId ?? "new"}
+      conversationId={conversationId}
+      initialMessages={initialMessages}
+      initialText={initialText}
+    />
+  );
+}
+
+function ChatConversation({
+  conversationId: initialConversationId,
+  initialMessages,
+  initialText,
+}: {
+  conversationId: string | null;
+  initialMessages: UIMessage[];
+  initialText: string | null;
+}) {
   const { user } = useAuth();
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [aiMode, setLocalAiMode] = useState<AiMode>("ask");
+  const conversationIdRef = useRef(initialConversationId);
+  const autoSentRef = useRef(false);
 
   useEffect(() => {
     if (!user) return;
@@ -125,7 +185,18 @@ export default function ChatPage() {
 
   const { messages, sendMessage, status, addToolResult } = useChat({
     transport,
+    messages: initialMessages,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onFinish: ({ messages: finished }) => {
+      if (conversationIdRef.current) {
+        void updateConversationMessages(conversationIdRef.current, finished);
+      } else {
+        void createConversation(finished).then((id) => {
+          conversationIdRef.current = id;
+          router.replace(`/chat?id=${id}`, { scroll: false });
+        });
+      }
+    },
     onToolCall: async ({ toolCall }) => {
       const { toolCallId, toolName, input: toolInput } = toolCall as {
         toolCallId: string;
@@ -240,6 +311,17 @@ export default function ChatPage() {
     },
   });
 
+  useEffect(() => {
+    if (initialText && !autoSentRef.current) {
+      autoSentRef.current = true;
+      sendMessage({ text: initialText });
+      router.replace(conversationIdRef.current ? `/chat?id=${conversationIdRef.current}` : "/chat", {
+        scroll: false,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialText]);
+
   const isBusy = status === "submitted" || status === "streaming";
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -253,18 +335,12 @@ export default function ChatPage() {
     <div className="flex h-[calc(100vh-8.5rem)] flex-col gap-4">
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Chat</span>
-        <Select
-          value={aiMode}
-          onValueChange={(mode) => user && void setAiMode(user.uid, mode as AiMode)}
+        <Link
+          href="/settings"
+          className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground hover:text-foreground"
         >
-          <SelectTrigger className="w-44 font-mono text-xs uppercase">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ask">Ask before acting</SelectItem>
-            <SelectItem value="execute">Auto-execute</SelectItem>
-          </SelectContent>
-        </Select>
+          Mode: {aiMode === "execute" ? "Auto-execute" : "Ask before acting"}
+        </Link>
       </div>
 
       {pendingActions.length > 0 && (

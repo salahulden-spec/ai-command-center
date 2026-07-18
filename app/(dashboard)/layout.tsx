@@ -2,28 +2,16 @@
 
 import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { useRouter } from "next/navigation";
+import { Bell, MessageCircle, Settings, LogOut } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
-import { cn } from "@/lib/utils";
-
-const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/projects", label: "Projects" },
-  { href: "/tasks", label: "Tasks" },
-  { href: "/inbox", label: "Inbox" },
-  { href: "/people", label: "People" },
-  { href: "/reminders", label: "Reminders" },
-  { href: "/knowledge", label: "Knowledge" },
-  { href: "/mind", label: "Mind View" },
-  { href: "/chat", label: "Chat" },
-];
+import { Sidebar } from "@/components/dashboard/sidebar";
+import { BottomNav } from "@/components/dashboard/bottom-nav";
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, loading, isAllowed, signOut } = useAuth();
   const router = useRouter();
-  const pathname = usePathname();
 
   useEffect(() => {
     if (loading) return;
@@ -42,45 +30,51 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-border/60 bg-background/80 px-6 py-4 backdrop-blur-sm">
-        <nav className="flex items-center gap-6">
-          <span className="glow-text font-mono text-sm font-medium tracking-tight">
-            AI Command Center
-          </span>
-          <div className="flex items-center gap-4">
-            {NAV_LINKS.map((link) => {
-              const active =
-                link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={cn(
-                    "font-mono text-xs uppercase tracking-widest transition-colors",
-                    active
-                      ? "glow-text text-primary"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-          </span>
-          <span className="font-mono text-xs">{user.email}</span>
-          <Button variant="outline" size="sm" onClick={() => void signOut()}>
-            Sign out
-          </Button>
+    <div className="min-h-screen">
+      <Sidebar user={user} onSignOut={() => void signOut()} />
+
+      <header
+        className="glow-border sticky top-0 z-30 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur-sm md:hidden"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+      >
+        <span className="glow-text font-mono text-sm font-medium tracking-tight">
+          AI Command Center
+        </span>
+        <div className="flex items-center gap-1">
+          <Link
+            href="/reminders"
+            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
+            aria-label="Reminders"
+          >
+            <Bell className="h-4 w-4" />
+          </Link>
+          <Link
+            href="/chat"
+            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
+            aria-label="Chat"
+          >
+            <MessageCircle className="h-4 w-4" />
+          </Link>
+          <Link
+            href="/settings"
+            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
+            aria-label="Settings"
+          >
+            <Settings className="h-4 w-4" />
+          </Link>
+          <button
+            onClick={() => void signOut()}
+            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
+            aria-label="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </header>
-      <main className="flex-1 p-6">{children}</main>
+
+      <main className="min-h-screen p-6 pb-24 md:ml-60 md:pb-6">{children}</main>
+
+      <BottomNav />
     </div>
   );
 }
