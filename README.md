@@ -19,4 +19,6 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Status
 
-Phase 0 — project scaffolding. No Firebase/Vercel accounts linked yet.
+Phase 2 complete — Google Sign-In gate, AI Gateway chat, and Firestore-backed
+Projects/Tasks/Inbox/People/Reminders are all live. Next up: Phase 3
+(agent orchestrator + permission-gated actions from chat).
