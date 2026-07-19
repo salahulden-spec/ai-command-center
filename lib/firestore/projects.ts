@@ -10,7 +10,8 @@ import {
   orderBy,
   query,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
+import { ref, deleteObject } from "firebase/storage";
+import { db, storage } from "@/lib/firebase/client";
 import { makeConverter } from "./converter";
 import type { Project, ProjectStatus } from "@/types";
 
@@ -51,17 +52,36 @@ export async function updateProject(
 }
 
 /**
- * Deleting a project must also delete its tasks subcollection —
- * Firestore never cascade-deletes subcollections on its own, and a
- * leftover task with a projectId pointing at a deleted project becomes
- * a dangling reference (breaks Mind View's graph edges, pollutes
- * listOpenTasks, etc).
+ * Deleting a project must also delete its subcollections — Firestore
+ * never cascade-deletes these on its own, and leftovers become dangling
+ * references (breaks Mind View's graph edges, pollutes listOpenTasks,
+ * leaks Storage blobs for documents, etc).
  */
 export async function deleteProject(projectId: string) {
-  const tasksSnap = await getDocs(collection(db, "projects", projectId, "tasks"));
+  const [tasksSnap, researchSnap, decisionsSnap, documentsSnap] = await Promise.all([
+    getDocs(collection(db, "projects", projectId, "tasks")),
+    getDocs(collection(db, "projects", projectId, "research")),
+    getDocs(collection(db, "projects", projectId, "decisions")),
+    getDocs(collection(db, "projects", projectId, "documents")),
+  ]);
+
+  await Promise.all(
+    documentsSnap.docs.map(async (docSnap) => {
+      const storagePath = docSnap.data().storagePath as string;
+      if (!storagePath) return;
+      try {
+        await deleteObject(ref(storage, storagePath));
+      } catch {
+        // storage object may already be gone — best effort
+      }
+    })
+  );
+
   const batch = writeBatch(db);
-  for (const taskDoc of tasksSnap.docs) {
-    batch.delete(taskDoc.ref);
+  for (const snap of [tasksSnap, researchSnap, decisionsSnap, documentsSnap]) {
+    for (const docSnap of snap.docs) {
+      batch.delete(docSnap.ref);
+    }
   }
   batch.delete(doc(db, "projects", projectId));
   return batch.commit();
