@@ -17,7 +17,8 @@ import { createReminder, markReminderDone } from "./reminders";
 import { createMemory } from "./memory";
 import { createDecision } from "./decisions";
 import { createResearchEntry } from "./research";
-import type { MemoryType, DecisionOption } from "@/types";
+import { createFiledDocument } from "./documents";
+import type { MemoryType, DecisionOption, DocumentEntities } from "@/types";
 
 const converter = makeConverter<PendingAction>();
 
@@ -103,6 +104,16 @@ export async function approvePendingAction(action: PendingAction) {
         tags?: string[];
       };
       await createResearchEntry(projectId, { title, content, links, tags });
+      break;
+    }
+    case "saveDocument": {
+      const { projectId, fileName, summary, entities } = action.payload as {
+        projectId: string;
+        fileName: string;
+        summary: string;
+        entities: DocumentEntities;
+      };
+      await createFiledDocument(projectId, { fileName, summary, entities });
       break;
     }
   }

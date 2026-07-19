@@ -113,6 +113,23 @@ const tools = {
       tags: z.array(z.string()).default([]).describe("Short topical tags"),
     }),
   }),
+  saveDocument: tool({
+    description:
+      "File an already-analyzed document attachment (summary + extracted entities, shown earlier in this conversation as an attachment) into a project's Documents section. Only call this when the user explicitly asks to save/file/attach the document to a specific project — call listProjects first to get its real id.",
+    inputSchema: z.object({
+      projectId: z.string().describe("The project's Firestore ID, from listProjects"),
+      fileName: z.string().describe("The attachment's file name, from the attachment context"),
+      summary: z.string().describe("The summary already generated for this attachment"),
+      entities: z
+        .object({
+          dates: z.array(z.string()).default([]),
+          people: z.array(z.string()).default([]),
+          companies: z.array(z.string()).default([]),
+          tasks: z.array(z.string()).default([]),
+        })
+        .describe("The entities already extracted for this attachment"),
+    }),
+  }),
 };
 
 function buildSystemPrompt() {
@@ -127,6 +144,7 @@ Every create/complete/saveMemory tool call is queued for the user's review befor
 Long-term memory: use searchMemory only when the user is explicitly asking you to recall or reference something from before — never search or inject memory automatically into unrelated requests, and never assume something is true from memory without having actually searched for it in this conversation. Use saveMemory when the user shares something clearly durable (a standing preference, a fixed fact, a decision) — not for routine task/project updates that already live in their own records.
 Strategic decisions: when the user asks something like "how should I approach X" / "what's the best way to do Y" / "should I do A or B", structure your answer as 2-3 named options, each with pros, cons, cost, time, risk, and ROI, followed by a clear recommendation with reasoning and a confidence percentage. If the question is clearly about a specific project, offer to save the analysis with saveDecision (resolve the project id via listProjects first) — don't save silently, mention you're doing it.
 Research: when the user shares something they found (a competitor, an article, a data point) in the context of a specific project, offer to log it with saveResearch the same way — resolve the project id first, mention what you're doing.
+Document attachments: when a message contains an "[Attached file: ...]" block, its summary and extracted entities were already generated — discuss it naturally, don't re-summarize it verbatim. Only call saveDocument if the user explicitly asks to file/save/attach it to a project (resolve the project id via listProjects first); otherwise treat it as one-off context for the conversation.
 Keep responses concise and practical.`;
 }
 

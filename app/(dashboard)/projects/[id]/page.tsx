@@ -1,12 +1,15 @@
 "use client";
 
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { onSnapshot } from "firebase/firestore";
 import { useCollection } from "@/hooks/use-collection";
 import { projectRef, updateProject, deleteProject } from "@/lib/firestore/projects";
 import { tasksQuery, createTask, updateTaskStatus, deleteTask } from "@/lib/firestore/tasks";
 import { researchQuery, deleteResearchEntry } from "@/lib/firestore/research";
 import { decisionsQuery, deleteDecision } from "@/lib/firestore/decisions";
+import { documentsQuery, deleteDocumentRecord } from "@/lib/firestore/documents";
+import { processDocumentUpload } from "@/lib/documents/process";
+import { isSupportedDocumentFile } from "@/lib/documents/extract-client";
 import type { Project } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +35,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { X } from "lucide-react";
+import { X, Upload } from "lucide-react";
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -42,7 +45,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { data: tasks } = useCollection(useMemo(() => tasksQuery(id), [id]));
   const { data: research } = useCollection(useMemo(() => researchQuery(id), [id]));
   const { data: decisions } = useCollection(useMemo(() => decisionsQuery(id), [id]));
+  const { data: documents } = useCollection(useMemo(() => documentsQuery(id), [id]));
   const [newTask, setNewTask] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     return onSnapshot(projectRef(id), (snap) => {
@@ -68,6 +74,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     if (!newTask.trim()) return;
     await createTask({ title: newTask.trim(), projectId: id });
     setNewTask("");
+  };
+
+  const handleFileSelected = async (file: File | undefined) => {
+    if (!file) return;
+    if (!isSupportedDocumentFile(file)) {
+      window.alert("Unsupported file type. Use PDF, Word (.docx), Excel (.xlsx/.xls), or an image.");
+      return;
+    }
+    setUploading(true);
+    try {
+      await processDocumentUpload(id, file);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -244,6 +264,82 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
       )}
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Documents</h2>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.xlsx,.xls,image/*"
+            className="hidden"
+            onChange={(e) => void handleFileSelected(e.target.files?.[0]).then(() => {
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            })}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="mr-1.5 h-3.5 w-3.5" />
+            {uploading ? "Uploading..." : "Upload"}
+          </Button>
+        </div>
+        <div className="flex flex-col gap-2">
+          {documents.length === 0 && (
+            <p className="text-sm text-muted-foreground">No documents yet.</p>
+          )}
+          {documents.map((docItem) => (
+            <div
+              key={docItem.id}
+              className="glow-border flex flex-col gap-2 rounded-md border bg-card/40 px-4 py-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-medium">{docItem.fileName}</p>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={docItem.status === "failed" ? "destructive" : "outline"}
+                    className="font-mono text-[0.6rem] uppercase"
+                  >
+                    {docItem.status}
+                  </Badge>
+                  <button
+                    onClick={() => void deleteDocumentRecord(id, docItem.id, docItem.storagePath)}
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Delete document"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              {docItem.status === "done" && (
+                <>
+                  <p className="text-sm text-muted-foreground">{docItem.extractedSummary}</p>
+                  {(docItem.extractedEntities.dates.length > 0 ||
+                    docItem.extractedEntities.people.length > 0 ||
+                    docItem.extractedEntities.companies.length > 0 ||
+                    docItem.extractedEntities.tasks.length > 0) && (
+                    <div className="flex flex-wrap gap-1">
+                      {[
+                        ...docItem.extractedEntities.dates,
+                        ...docItem.extractedEntities.people,
+                        ...docItem.extractedEntities.companies,
+                        ...docItem.extractedEntities.tasks,
+                      ].map((entity, i) => (
+                        <Badge key={i} variant="outline" className="font-mono text-[0.6rem]">
+                          {entity}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

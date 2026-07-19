@@ -32,13 +32,17 @@ import {
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
 import { createDecision } from "@/lib/firestore/decisions";
 import { createResearchEntry } from "@/lib/firestore/research";
+import { createFiledDocument } from "@/lib/firestore/documents";
+import { analyzeAdHocFile } from "@/lib/documents/process";
+import { isSupportedDocumentFile } from "@/lib/documents/extract-client";
 import { embedText } from "@/lib/ai/embed-client";
 import {
   createConversation,
   updateConversationMessages,
   getConversationOnce,
 } from "@/lib/firestore/conversations";
-import type { AiMode, DecisionOption, MemoryType, PendingActionType } from "@/types";
+import type { AiMode, DecisionOption, DocumentEntities, MemoryType, PendingActionType } from "@/types";
+import { Paperclip, X as XIcon } from "lucide-react";
 
 const READ_TOOLS = new Set([
   "listProjects",
@@ -108,7 +112,7 @@ async function validateReference(
       return `No pending reminder exists with id "${toolInput.reminderId}". Call listPendingReminders and use one of the exact ids it returns.`;
     }
   }
-  if (toolName === "saveDecision" || toolName === "saveResearch") {
+  if (toolName === "saveDecision" || toolName === "saveResearch" || toolName === "saveDocument") {
     const projects = await listProjectsOnce();
     if (!projects.some((p) => p.id === toolInput.projectId)) {
       return `No project exists with id "${toolInput.projectId}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
@@ -135,6 +139,8 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Log decision: "${input.question}" → ${input.recommended}`;
     case "saveResearch":
       return `Log research: "${input.title}"`;
+    case "saveDocument":
+      return `File document: "${input.fileName}"`;
     default:
       return toolName;
   }
@@ -201,6 +207,13 @@ function ChatConversation({
   const router = useRouter();
   const [input, setInput] = useState("");
   const [aiMode, setLocalAiMode] = useState<AiMode>("ask");
+  const [attachment, setAttachment] = useState<{
+    fileName: string;
+    summary: string;
+    entities: DocumentEntities;
+  } | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const conversationIdRef = useRef(initialConversationId);
   const autoSentRef = useRef(false);
 
@@ -369,6 +382,14 @@ function ChatConversation({
                   tags?: string[];
                 };
                 await createResearchEntry(projectId, { title, content, links, tags });
+              } else if (mutationType === "saveDocument") {
+                const { projectId, fileName, summary, entities } = mutationPayload as {
+                  projectId: string;
+                  fileName: string;
+                  summary: string;
+                  entities: DocumentEntities;
+                };
+                await createFiledDocument(projectId, { fileName, summary, entities });
               }
             })(),
             15000
@@ -405,11 +426,42 @@ function ChatConversation({
 
   const isBusy = status === "submitted" || status === "streaming";
 
+  const handleAttachFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!isSupportedDocumentFile(file)) {
+      window.alert("Unsupported file type. Use PDF, Word (.docx), Excel (.xlsx/.xls), or an image.");
+      return;
+    }
+    setAttaching(true);
+    try {
+      const { summary, entities } = await analyzeAdHocFile(file);
+      setAttachment({ fileName: file.name, summary, entities });
+    } catch {
+      window.alert("Couldn't read that file — try a different one.");
+    } finally {
+      setAttaching(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isBusy) return;
-    sendMessage({ text: input });
+    if ((!input.trim() && !attachment) || isBusy || attaching) return;
+    const entityList = attachment
+      ? [
+          ...attachment.entities.dates,
+          ...attachment.entities.people,
+          ...attachment.entities.companies,
+          ...attachment.entities.tasks,
+        ]
+      : [];
+    const attachmentBlock = attachment
+      ? `[Attached file: ${attachment.fileName}]\nSummary: ${attachment.summary}${
+          entityList.length > 0 ? `\nMentions: ${entityList.join(", ")}` : ""
+        }\n\n`
+      : "";
+    sendMessage({ text: `${attachmentBlock}${input}` });
     setInput("");
+    setAttachment(null);
   };
 
   return (
@@ -509,7 +561,38 @@ function ChatConversation({
           ))}
         </div>
       </ScrollArea>
+      {attachment && (
+        <div className="glow-border flex items-center justify-between rounded-md border bg-card/60 px-3 py-2">
+          <span className="text-sm">📎 {attachment.fileName}</span>
+          <button
+            onClick={() => setAttachment(null)}
+            className="text-muted-foreground hover:text-destructive"
+            aria-label="Remove attachment"
+          >
+            <XIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       <form onSubmit={handleSubmit} className="flex gap-2">
+        <input
+          ref={attachInputRef}
+          type="file"
+          accept=".pdf,.docx,.xlsx,.xls,image/*"
+          className="hidden"
+          onChange={(e) => void handleAttachFile(e.target.files?.[0]).then(() => {
+            if (attachInputRef.current) attachInputRef.current.value = "";
+          })}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          disabled={attaching}
+          onClick={() => attachInputRef.current?.click()}
+          aria-label="Attach file"
+        >
+          <Paperclip className="h-4 w-4" />
+        </Button>
         <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -519,11 +602,11 @@ function ChatConversation({
               handleSubmit(e);
             }
           }}
-          placeholder="Message..."
+          placeholder={attaching ? "Reading attachment..." : "Message..."}
           className="min-h-[44px] resize-none"
           rows={1}
         />
-        <Button type="submit" disabled={isBusy || !input.trim()}>
+        <Button type="submit" disabled={isBusy || attaching || (!input.trim() && !attachment)}>
           Send
         </Button>
       </form>

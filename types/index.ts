@@ -114,6 +114,26 @@ export interface ResearchEntry {
   createdAt: Timestamp;
 }
 
+export interface DocumentEntities {
+  dates: string[];
+  people: string[];
+  companies: string[];
+  tasks: string[];
+}
+
+export type DocumentStatus = "processing" | "done" | "failed";
+
+export interface ProjectDocument {
+  id: string;
+  fileName: string;
+  fileType: string;
+  storagePath: string;
+  status: DocumentStatus;
+  extractedSummary: string;
+  extractedEntities: DocumentEntities;
+  createdAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"
@@ -122,7 +142,8 @@ export type PendingActionType =
   | "completeReminder"
   | "saveMemory"
   | "saveDecision"
-  | "saveResearch";
+  | "saveResearch"
+  | "saveDocument";
 export type PendingActionStatus = "pending" | "approved" | "rejected";
 
 export interface PendingAction {
