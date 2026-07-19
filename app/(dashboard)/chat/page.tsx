@@ -48,6 +48,28 @@ const READ_TOOLS = new Set([
 ]);
 
 /**
+ * The AI SDK awaits onToolCall before it can process any later stream
+ * chunk or fire the auto-continuation — a hung Firestore call inside it
+ * silently freezes the whole chat with no error surfaced. Bound every
+ * await chain in there so a stall degrades into a visible error instead.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out.")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+/**
  * The model can hallucinate plausible-looking IDs (e.g. a slug like
  * "websiteRedesignId" instead of a real Firestore auto-ID) instead of
  * using the exact id from a prior list* tool result — this happens when
@@ -257,18 +279,23 @@ function ChatConversation({
               .slice(0, 5)
               .filter((m) => m.score > 0.3);
           }
-          addToolResult({ tool: toolName, toolCallId, output });
+          await addToolResult({ tool: toolName, toolCallId, output });
         } catch {
-          addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
+          await addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
         }
         return;
       }
 
       const mutationType = toolName as PendingActionType;
 
-      const referenceError = await validateReference(toolName, toolInput);
+      let referenceError: string | null;
+      try {
+        referenceError = await withTimeout(validateReference(toolName, toolInput), 15000);
+      } catch {
+        referenceError = "Timed out looking up existing records — please try again.";
+      }
       if (referenceError) {
-        addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
+        await addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
         return;
       }
 
@@ -283,59 +310,64 @@ function ChatConversation({
 
       if (aiMode === "execute") {
         try {
-          if (mutationType === "createProject") {
-            await createProject(mutationPayload as { name: string; description: string });
-          } else if (mutationType === "createTask") {
-            await createTask(mutationPayload as { title: string; projectId: string | null });
-          } else if (mutationType === "createReminder") {
-            const { text, dueAt } = mutationPayload as { text: string; dueAt: string };
-            await createReminder({ text, dueAt: new Date(dueAt) });
-          } else if (mutationType === "completeTask") {
-            const { taskId, projectId } = mutationPayload as {
-              taskId: string;
-              projectId: string | null;
-            };
-            await updateTaskStatus(projectId, taskId, "done");
-          } else if (mutationType === "completeReminder") {
-            const { reminderId } = mutationPayload as { reminderId: string };
-            await markReminderDone(reminderId);
-          } else if (mutationType === "saveMemory") {
-            const { type, content, embedding } = mutationPayload as {
-              type: MemoryType;
-              content: string;
-              embedding: number[];
-            };
-            await createMemory({ type, content, embedding, source: "ai" });
-          } else if (mutationType === "saveDecision") {
-            const { projectId, question, options, recommended, reasoning, confidence } =
-              mutationPayload as {
-                projectId: string;
-                question: string;
-                options: DecisionOption[];
-                recommended: string;
-                reasoning: string;
-                confidence: number;
-              };
-            await createDecision(projectId, {
-              question,
-              options,
-              recommended,
-              reasoning,
-              confidence,
-            });
-          } else if (mutationType === "saveResearch") {
-            const { projectId, title, content, links, tags } = mutationPayload as {
-              projectId: string;
-              title: string;
-              content: string;
-              links?: string[];
-              tags?: string[];
-            };
-            await createResearchEntry(projectId, { title, content, links, tags });
-          }
-          addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
+          await withTimeout(
+            (async () => {
+              if (mutationType === "createProject") {
+                await createProject(mutationPayload as { name: string; description: string });
+              } else if (mutationType === "createTask") {
+                await createTask(mutationPayload as { title: string; projectId: string | null });
+              } else if (mutationType === "createReminder") {
+                const { text, dueAt } = mutationPayload as { text: string; dueAt: string };
+                await createReminder({ text, dueAt: new Date(dueAt) });
+              } else if (mutationType === "completeTask") {
+                const { taskId, projectId } = mutationPayload as {
+                  taskId: string;
+                  projectId: string | null;
+                };
+                await updateTaskStatus(projectId, taskId, "done");
+              } else if (mutationType === "completeReminder") {
+                const { reminderId } = mutationPayload as { reminderId: string };
+                await markReminderDone(reminderId);
+              } else if (mutationType === "saveMemory") {
+                const { type, content, embedding } = mutationPayload as {
+                  type: MemoryType;
+                  content: string;
+                  embedding: number[];
+                };
+                await createMemory({ type, content, embedding, source: "ai" });
+              } else if (mutationType === "saveDecision") {
+                const { projectId, question, options, recommended, reasoning, confidence } =
+                  mutationPayload as {
+                    projectId: string;
+                    question: string;
+                    options: DecisionOption[];
+                    recommended: string;
+                    reasoning: string;
+                    confidence: number;
+                  };
+                await createDecision(projectId, {
+                  question,
+                  options,
+                  recommended,
+                  reasoning,
+                  confidence,
+                });
+              } else if (mutationType === "saveResearch") {
+                const { projectId, title, content, links, tags } = mutationPayload as {
+                  projectId: string;
+                  title: string;
+                  content: string;
+                  links?: string[];
+                  tags?: string[];
+                };
+                await createResearchEntry(projectId, { title, content, links, tags });
+              }
+            })(),
+            15000
+          );
+          await addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
         } catch {
-          addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
+          await addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
         }
       } else {
         await queuePendingAction(
@@ -343,7 +375,7 @@ function ChatConversation({
           summarizeAction(toolName, toolInput),
           mutationPayload
         );
-        addToolResult({
+        await addToolResult({
           tool: toolName,
           toolCallId,
           output: "Queued for your approval — see Pending Actions.",
