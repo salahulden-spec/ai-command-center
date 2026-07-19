@@ -195,10 +195,13 @@ function ChatConversation({
     []
   );
 
-  const { messages, sendMessage, status, addToolResult } = useChat({
+  const { messages, sendMessage, status, error, addToolResult } = useChat({
     transport,
     messages: initialMessages,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    onError: (err) => {
+      console.error("Chat error:", err);
+    },
     onFinish: ({ messages: finished }) => {
       if (conversationIdRef.current) {
         void updateConversationMessages(conversationIdRef.current, finished);
@@ -380,6 +383,12 @@ function ChatConversation({
           Mode: {aiMode === "execute" ? "Auto-execute" : "Ask before acting"}
         </Link>
       </div>
+
+      {error && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error.message || "Something went wrong."}
+        </div>
+      )}
 
       {pendingActions.length > 0 && (
         <div className="flex flex-col gap-2">
