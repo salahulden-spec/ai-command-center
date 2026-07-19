@@ -191,6 +191,14 @@ function ChatConversation({
           const token = await auth.currentUser?.getIdToken();
           return token ? { Authorization: `Bearer ${token}` } : {};
         },
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const bodyStr = typeof init?.body === "string" ? init.body : null;
+          console.log("[DIAG] request body", bodyStr);
+          const resp = await fetch(input, init);
+          const clone = resp.clone();
+          clone.text().then((t) => console.log("[DIAG] response text", resp.status, t));
+          return resp;
+        },
       }),
     []
   );
@@ -203,6 +211,25 @@ function ChatConversation({
       console.error("Chat error:", err);
     },
     onFinish: ({ messages: finished }) => {
+      console.log(
+        "[DIAG] onFinish",
+        JSON.stringify(
+          finished.map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts.map((p) => ({
+              type: p.type,
+              ...(p.type === "text" ? { text: (p as { text: string }).text } : {}),
+              ...(p.type.startsWith("tool-")
+                ? {
+                    state: (p as { state?: string }).state,
+                    output: (p as { output?: unknown }).output,
+                  }
+                : {}),
+            })),
+          }))
+        )
+      );
       if (conversationIdRef.current) {
         void updateConversationMessages(conversationIdRef.current, finished);
       } else {
@@ -218,6 +245,7 @@ function ChatConversation({
         toolName: string;
         input: Record<string, unknown>;
       };
+      console.log("[DIAG] onToolCall start", toolName, toolCallId);
 
       if (READ_TOOLS.has(toolName)) {
         try {
