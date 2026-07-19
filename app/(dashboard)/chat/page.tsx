@@ -49,9 +49,17 @@ const READ_TOOLS = new Set([
 
 /**
  * The AI SDK awaits onToolCall before it can process any later stream
- * chunk or fire the auto-continuation — a hung Firestore call inside it
- * silently freezes the whole chat with no error surfaced. Bound every
- * await chain in there so a stall degrades into a visible error instead.
+ * chunk — a hung Firestore call inside it silently freezes the whole
+ * chat with no error surfaced. Bound every await chain in onToolCall so
+ * a stall degrades into a visible error instead.
+ *
+ * Do NOT also `await addToolResult(...)` as a way to make this safer:
+ * addToolResult queues its state update on the SDK's own SerialJobExecutor,
+ * the same queue onToolCall's containing job runs on. Awaiting it from
+ * inside onToolCall deadlocks — that job can't advance until the queued
+ * addToolResult job runs, which can't run until the current job (the one
+ * doing the awaiting) finishes. Fire-and-forget addToolResult calls here
+ * are intentional, not an oversight.
  */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -279,9 +287,9 @@ function ChatConversation({
               .slice(0, 5)
               .filter((m) => m.score > 0.3);
           }
-          await addToolResult({ tool: toolName, toolCallId, output });
+          addToolResult({ tool: toolName, toolCallId, output });
         } catch {
-          await addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
         }
         return;
       }
@@ -295,7 +303,7 @@ function ChatConversation({
         referenceError = "Timed out looking up existing records — please try again.";
       }
       if (referenceError) {
-        await addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
+        addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
         return;
       }
 
@@ -365,9 +373,9 @@ function ChatConversation({
             })(),
             15000
           );
-          await addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
+          addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
         } catch {
-          await addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
         }
       } else {
         await queuePendingAction(
@@ -375,7 +383,7 @@ function ChatConversation({
           summarizeAction(toolName, toolInput),
           mutationPayload
         );
-        await addToolResult({
+        addToolResult({
           tool: toolName,
           toolCallId,
           output: "Queued for your approval — see Pending Actions.",
