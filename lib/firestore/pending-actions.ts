@@ -15,7 +15,9 @@ import { createProject } from "./projects";
 import { createTask, updateTaskStatus } from "./tasks";
 import { createReminder, markReminderDone } from "./reminders";
 import { createMemory } from "./memory";
-import type { MemoryType } from "@/types";
+import { createDecision } from "./decisions";
+import { createResearchEntry } from "./research";
+import type { MemoryType, DecisionOption } from "@/types";
 
 const converter = makeConverter<PendingAction>();
 
@@ -77,6 +79,30 @@ export async function approvePendingAction(action: PendingAction) {
         embedding: number[];
       };
       await createMemory({ type, content, embedding, source: "ai" });
+      break;
+    }
+    case "saveDecision": {
+      const { projectId, question, options, recommended, reasoning, confidence } =
+        action.payload as {
+          projectId: string;
+          question: string;
+          options: DecisionOption[];
+          recommended: string;
+          reasoning: string;
+          confidence: number;
+        };
+      await createDecision(projectId, { question, options, recommended, reasoning, confidence });
+      break;
+    }
+    case "saveResearch": {
+      const { projectId, title, content, links, tags } = action.payload as {
+        projectId: string;
+        title: string;
+        content: string;
+        links?: string[];
+        tags?: string[];
+      };
+      await createResearchEntry(projectId, { title, content, links, tags });
       break;
     }
   }

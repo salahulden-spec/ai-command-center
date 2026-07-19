@@ -5,6 +5,8 @@ import { onSnapshot } from "firebase/firestore";
 import { useCollection } from "@/hooks/use-collection";
 import { projectRef, updateProject, deleteProject } from "@/lib/firestore/projects";
 import { tasksQuery, createTask, updateTaskStatus, deleteTask } from "@/lib/firestore/tasks";
+import { researchQuery, deleteResearchEntry } from "@/lib/firestore/research";
+import { decisionsQuery, deleteDecision } from "@/lib/firestore/decisions";
 import type { Project } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +40,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const { data: tasks } = useCollection(useMemo(() => tasksQuery(id), [id]));
+  const { data: research } = useCollection(useMemo(() => researchQuery(id), [id]));
+  const { data: decisions } = useCollection(useMemo(() => decisionsQuery(id), [id]));
   const [newTask, setNewTask] = useState("");
 
   useEffect(() => {
@@ -171,6 +175,75 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           ))}
         </div>
       </div>
+
+      {research.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Research</h2>
+          <div className="flex flex-col gap-2">
+            {research.map((entry) => (
+              <div
+                key={entry.id}
+                className="glow-border flex flex-col gap-1 rounded-md border bg-card/40 px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium">{entry.title}</p>
+                  <button
+                    onClick={() => void deleteResearchEntry(id, entry.id)}
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Delete research entry"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="text-sm text-muted-foreground">{entry.content}</p>
+                {entry.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {entry.tags.map((tag) => (
+                      <Badge key={tag} variant="outline" className="font-mono text-[0.6rem] uppercase">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {decisions.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Decisions</h2>
+          <div className="flex flex-col gap-2">
+            {decisions.map((decision) => (
+              <div
+                key={decision.id}
+                className="glow-border flex flex-col gap-2 rounded-md border bg-card/40 px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium">{decision.question}</p>
+                  <button
+                    onClick={() => void deleteDecision(id, decision.id)}
+                    className="text-muted-foreground hover:text-destructive"
+                    aria-label="Delete decision"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className="font-mono text-[0.6rem] uppercase">
+                    {decision.recommended}
+                  </Badge>
+                  <span className="font-mono text-[0.65rem] text-muted-foreground">
+                    {decision.confidence}% confidence
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">{decision.reasoning}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

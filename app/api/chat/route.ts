@@ -78,6 +78,41 @@ const tools = {
       query: z.string().describe("What to search for, in natural language"),
     }),
   }),
+  saveDecision: tool({
+    description:
+      "Save a structured decision analysis (the options you compared and your recommendation) to a project's decision log, after presenting it in your response. Only offer this when the decision is tied to a specific project — call listProjects first to get its real id.",
+    inputSchema: z.object({
+      projectId: z.string().describe("The project's Firestore ID, from listProjects"),
+      question: z.string().describe("The decision question being analyzed"),
+      options: z
+        .array(
+          z.object({
+            label: z.string(),
+            pros: z.string(),
+            cons: z.string(),
+            cost: z.string(),
+            time: z.string(),
+            risk: z.string(),
+            roi: z.string(),
+          })
+        )
+        .describe("2-3 options that were compared"),
+      recommended: z.string().describe("Label of the recommended option"),
+      reasoning: z.string().describe("Why that option is recommended"),
+      confidence: z.number().min(0).max(100).describe("Confidence percentage, 0-100"),
+    }),
+  }),
+  saveResearch: tool({
+    description:
+      "Save a research finding or note to a project's research log (e.g. the user found a competitor site, shared an article, or reported findings). Only offer this when tied to a specific project — call listProjects first to get its real id.",
+    inputSchema: z.object({
+      projectId: z.string().describe("The project's Firestore ID, from listProjects"),
+      title: z.string().describe("Short title for this research entry"),
+      content: z.string().describe("The research content/summary"),
+      links: z.array(z.string()).default([]).describe("Any URLs mentioned"),
+      tags: z.array(z.string()).default([]).describe("Short topical tags"),
+    }),
+  }),
 };
 
 function buildSystemPrompt() {
@@ -90,6 +125,8 @@ The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-onl
 CRITICAL: IDs are opaque random Firestore strings (e.g. "e3QIlmSjbpg46UHWRt0Q") — never construct, guess, or slugify one from a name (e.g. "websiteRedesignId" is never valid). If a task requires an existing project/task/reminder's ID and you have not just seen it in an actual tool result, call the matching list* tool FIRST, wait for its real output, and only then call the mutating tool with the exact id string from that result — do not call the lookup and the action that depends on it in the same step.
 Every create/complete/saveMemory tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
 Long-term memory: use searchMemory only when the user is explicitly asking you to recall or reference something from before — never search or inject memory automatically into unrelated requests, and never assume something is true from memory without having actually searched for it in this conversation. Use saveMemory when the user shares something clearly durable (a standing preference, a fixed fact, a decision) — not for routine task/project updates that already live in their own records.
+Strategic decisions: when the user asks something like "how should I approach X" / "what's the best way to do Y" / "should I do A or B", structure your answer as 2-3 named options, each with pros, cons, cost, time, risk, and ROI, followed by a clear recommendation with reasoning and a confidence percentage. If the question is clearly about a specific project, offer to save the analysis with saveDecision (resolve the project id via listProjects first) — don't save silently, mention you're doing it.
+Research: when the user shares something they found (a competitor, an article, a data point) in the context of a specific project, offer to log it with saveResearch the same way — resolve the project id first, mention what you're doing.
 Keep responses concise and practical.`;
 }
 

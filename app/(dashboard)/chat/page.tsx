@@ -30,13 +30,15 @@ import {
   listPendingRemindersOnce,
 } from "@/lib/firestore/reminders";
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
+import { createDecision } from "@/lib/firestore/decisions";
+import { createResearchEntry } from "@/lib/firestore/research";
 import { embedText } from "@/lib/ai/embed-client";
 import {
   createConversation,
   updateConversationMessages,
   getConversationOnce,
 } from "@/lib/firestore/conversations";
-import type { AiMode, MemoryType, PendingActionType } from "@/types";
+import type { AiMode, DecisionOption, MemoryType, PendingActionType } from "@/types";
 
 const READ_TOOLS = new Set([
   "listProjects",
@@ -76,6 +78,12 @@ async function validateReference(
       return `No pending reminder exists with id "${toolInput.reminderId}". Call listPendingReminders and use one of the exact ids it returns.`;
     }
   }
+  if (toolName === "saveDecision" || toolName === "saveResearch") {
+    const projects = await listProjectsOnce();
+    if (!projects.some((p) => p.id === toolInput.projectId)) {
+      return `No project exists with id "${toolInput.projectId}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
+    }
+  }
   return null;
 }
 
@@ -93,6 +101,10 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Mark reminder "${input.reminderText}" as done`;
     case "saveMemory":
       return `Remember: "${input.content}"`;
+    case "saveDecision":
+      return `Log decision: "${input.question}" → ${input.recommended}`;
+    case "saveResearch":
+      return `Log research: "${input.title}"`;
     default:
       return toolName;
   }
@@ -291,6 +303,32 @@ function ChatConversation({
               embedding: number[];
             };
             await createMemory({ type, content, embedding, source: "ai" });
+          } else if (mutationType === "saveDecision") {
+            const { projectId, question, options, recommended, reasoning, confidence } =
+              mutationPayload as {
+                projectId: string;
+                question: string;
+                options: DecisionOption[];
+                recommended: string;
+                reasoning: string;
+                confidence: number;
+              };
+            await createDecision(projectId, {
+              question,
+              options,
+              recommended,
+              reasoning,
+              confidence,
+            });
+          } else if (mutationType === "saveResearch") {
+            const { projectId, title, content, links, tags } = mutationPayload as {
+              projectId: string;
+              title: string;
+              content: string;
+              links?: string[];
+              tags?: string[];
+            };
+            await createResearchEntry(projectId, { title, content, links, tags });
           }
           addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
         } catch {

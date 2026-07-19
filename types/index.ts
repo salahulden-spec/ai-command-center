@@ -85,13 +85,44 @@ export interface Conversation {
   updatedAt: Timestamp;
 }
 
+export interface DecisionOption {
+  label: string;
+  pros: string;
+  cons: string;
+  cost: string;
+  time: string;
+  risk: string;
+  roi: string;
+}
+
+export interface Decision {
+  id: string;
+  question: string;
+  options: DecisionOption[];
+  recommended: string;
+  reasoning: string;
+  confidence: number;
+  decidedAt: Timestamp;
+}
+
+export interface ResearchEntry {
+  id: string;
+  title: string;
+  content: string;
+  links: string[];
+  tags: string[];
+  createdAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"
   | "createReminder"
   | "completeTask"
   | "completeReminder"
-  | "saveMemory";
+  | "saveMemory"
+  | "saveDecision"
+  | "saveResearch";
 export type PendingActionStatus = "pending" | "approved" | "rejected";
 
 export interface PendingAction {
