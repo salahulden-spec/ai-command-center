@@ -26,6 +26,7 @@ export interface Task {
   projectId: string | null;
   source: "manual" | "ai";
   createdAt: Timestamp;
+  updatedAt: Timestamp | null;
 }
 
 export type InboxItemType = "note" | "link";
@@ -131,6 +132,25 @@ export interface ProjectDocument {
   status: DocumentStatus;
   extractedSummary: string;
   extractedEntities: DocumentEntities;
+  createdAt: Timestamp;
+}
+
+export type WorkflowStep =
+  | { type: "createTask"; title: string; projectId: string | null }
+  | { type: "createReminder"; text: string; delayMinutes: number };
+
+export interface WorkflowTrigger {
+  collection: "tasks";
+  event: "statusChanged";
+  toStatus: string;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  trigger: WorkflowTrigger;
+  steps: WorkflowStep[];
+  enabled: boolean;
   createdAt: Timestamp;
 }
 

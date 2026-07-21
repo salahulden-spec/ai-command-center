@@ -35,13 +35,21 @@ import { createResearchEntry } from "@/lib/firestore/research";
 import { createFiledDocument } from "@/lib/firestore/documents";
 import { analyzeAdHocFile } from "@/lib/documents/process";
 import { isSupportedDocumentFile } from "@/lib/documents/extract-client";
+import { createWorkflow } from "@/lib/firestore/workflows";
 import { embedText } from "@/lib/ai/embed-client";
 import {
   createConversation,
   updateConversationMessages,
   getConversationOnce,
 } from "@/lib/firestore/conversations";
-import type { AiMode, DecisionOption, DocumentEntities, MemoryType, PendingActionType } from "@/types";
+import type {
+  AiMode,
+  DecisionOption,
+  DocumentEntities,
+  MemoryType,
+  PendingActionType,
+  WorkflowStep,
+} from "@/types";
 import { Paperclip, X as XIcon } from "lucide-react";
 
 const READ_TOOLS = new Set([
@@ -116,6 +124,17 @@ async function validateReference(
     const projects = await listProjectsOnce();
     if (!projects.some((p) => p.id === toolInput.projectId)) {
       return `No project exists with id "${toolInput.projectId}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
+    }
+  }
+  if (toolName === "createWorkflow") {
+    const steps = (toolInput.steps as { projectId?: string | null }[] | undefined) ?? [];
+    const referencedProjectIds = steps.map((s) => s.projectId).filter((id): id is string => !!id);
+    if (referencedProjectIds.length > 0) {
+      const projects = await listProjectsOnce();
+      const missing = referencedProjectIds.find((id) => !projects.some((p) => p.id === id));
+      if (missing) {
+        return `No project exists with id "${missing}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
+      }
     }
   }
   return null;
@@ -303,6 +322,42 @@ function ChatConversation({
           addToolResult({ tool: toolName, toolCallId, output });
         } catch {
           addToolResult({ tool: toolName, toolCallId, output: "Failed to fetch." });
+        }
+        return;
+      }
+
+      if (toolName === "createWorkflow") {
+        let referenceError: string | null;
+        try {
+          referenceError = await withTimeout(validateReference(toolName, toolInput), 15000);
+        } catch {
+          referenceError = "Timed out looking up existing records — please try again.";
+        }
+        if (referenceError) {
+          addToolResult({ tool: toolName, toolCallId, output: `Error: ${referenceError}` });
+          return;
+        }
+        try {
+          const { name, triggerToStatus, steps } = toolInput as {
+            name: string;
+            triggerToStatus: string;
+            steps: WorkflowStep[];
+          };
+          await withTimeout(
+            createWorkflow({
+              name,
+              trigger: { collection: "tasks", event: "statusChanged", toStatus: triggerToStatus },
+              steps,
+            }),
+            15000
+          );
+          addToolResult({
+            tool: toolName,
+            toolCallId,
+            output: "Created, but disabled — enable it on the Automations page to activate.",
+          });
+        } catch {
+          addToolResult({ tool: toolName, toolCallId, output: "Failed to create automation." });
         }
         return;
       }

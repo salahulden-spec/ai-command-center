@@ -50,6 +50,7 @@ export async function createTask(input: {
     projectId: input.projectId,
     source: "manual",
     createdAt: serverTimestamp(),
+    updatedAt: null,
   } as unknown as Task);
 }
 
@@ -58,7 +59,10 @@ export async function updateTaskStatus(
   taskId: string,
   status: TaskStatus
 ) {
-  return updateDoc(doc(tasksCollection(projectId), taskId), { status });
+  return updateDoc(doc(tasksCollection(projectId), taskId), {
+    status,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function deleteTask(projectId: string | null, taskId: string) {

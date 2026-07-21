@@ -9,6 +9,7 @@ import {
   Settings,
   Network,
   BookOpen,
+  Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,6 +33,7 @@ export const PRIMARY_NAV: NavLink[] = [
 export const SECONDARY_NAV: NavLink[] = [
   { href: "/mind", label: "Mind View", icon: Network },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/automations", label: "Automations", icon: Zap },
 ];
 
 export const MOBILE_NAV: NavLink[] = [

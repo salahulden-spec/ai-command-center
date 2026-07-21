@@ -130,6 +130,44 @@ const tools = {
         .describe("The entities already extracted for this attachment"),
     }),
   }),
+  createWorkflow: tool({
+    description:
+      "Create a standing automation that runs on its own whenever a task's status changes to a specific value (e.g. \"done\") — for example, creating a follow-up task or a reminder automatically. Always runs immediately (not gated by the ask/execute mode) but is created disabled — tell the user it needs to be enabled on the Automations page before it will actually run, and clearly describe what it does before saving.",
+    inputSchema: z.object({
+      name: z.string().describe("Short name for this automation"),
+      triggerToStatus: z
+        .string()
+        .describe('The task status that triggers this workflow, e.g. "done"'),
+      steps: z
+        .array(
+          z.discriminatedUnion("type", [
+            z.object({
+              type: z.literal("createTask"),
+              title: z
+                .string()
+                .describe('Task title to create. Can reference {{title}} for the triggering task\'s title.'),
+              projectId: z
+                .string()
+                .nullable()
+                .default(null)
+                .describe("Project to attach the new task to, or null for standalone"),
+            }),
+            z.object({
+              type: z.literal("createReminder"),
+              text: z
+                .string()
+                .describe('Reminder text. Can reference {{title}} for the triggering task\'s title.'),
+              delayMinutes: z
+                .number()
+                .default(0)
+                .describe("Minutes after the trigger fires before this reminder is due"),
+            }),
+          ])
+        )
+        .min(1)
+        .describe("What to do when the trigger fires, run in order"),
+    }),
+  }),
 };
 
 function buildSystemPrompt() {
@@ -145,6 +183,7 @@ Long-term memory: use searchMemory only when the user is explicitly asking you t
 Strategic decisions: when the user asks something like "how should I approach X" / "what's the best way to do Y" / "should I do A or B", structure your answer as 2-3 named options, each with pros, cons, cost, time, risk, and ROI, followed by a clear recommendation with reasoning and a confidence percentage. If the question is clearly about a specific project, offer to save the analysis with saveDecision (resolve the project id via listProjects first) — don't save silently, mention you're doing it.
 Research: when the user shares something they found (a competitor, an article, a data point) in the context of a specific project, offer to log it with saveResearch the same way — resolve the project id first, mention what you're doing.
 Document attachments: when a message contains an "[Attached file: ...]" block, its summary and extracted entities were already generated — discuss it naturally, don't re-summarize it verbatim. Only call saveDocument if the user explicitly asks to file/save/attach it to a project (resolve the project id via listProjects first); otherwise treat it as one-off context for the conversation.
+Automations: only createWorkflow when the user explicitly describes a standing "when X happens, do Y" rule tied to a task status change — don't offer this for one-off requests. Currently only task-status-change triggers are supported (e.g. "when a task is marked done"); if the user describes a different kind of trigger, say that's not supported yet instead of creating something that won't fire. New workflows are created disabled by design — always tell the user they need to enable it on the Automations page, and state plainly what it will do.
 Keep responses concise and practical.`;
 }
 
