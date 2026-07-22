@@ -154,6 +154,15 @@ export interface Workflow {
   createdAt: Timestamp;
 }
 
+export type BriefingType = "daily" | "weekly";
+
+export interface Briefing {
+  id: string;
+  type: BriefingType;
+  content: string;
+  createdAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"

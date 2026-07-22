@@ -1,9 +1,18 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { generateText } from "ai";
 
 initializeApp();
 const db = getFirestore();
+
+// Vercel's Fluid Compute/OIDC auth doesn't apply outside Vercel — Cloud
+// Functions authenticates to the AI Gateway with the same static
+// AI_GATEWAY_API_KEY already used locally, stored as a Firebase secret
+// (`firebase functions:secrets:set AI_GATEWAY_API_KEY`) and bound per
+// function below so it lands in process.env at runtime.
+const AI_GATEWAY_API_KEY = defineSecret("AI_GATEWAY_API_KEY");
 
 // Firestore triggers (Eventarc) aren't supported in me-central2, the region
 // this project's Firestore database lives in — real-time Firestore-triggered
@@ -111,5 +120,108 @@ export const pollTaskWorkflows = onSchedule(
     }
 
     await POLL_STATE_DOC.set({ lastPolledAt: pollStartedAt });
+  }
+);
+
+async function saveBriefing(type: "daily" | "weekly", content: string) {
+  await db.collection("briefings").add({
+    type,
+    content,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
+ * Runs every day at 7am ET. Pulls today's open tasks, pending reminders, and
+ * active projects, then asks the model to write a short morning briefing.
+ * Adjust the `schedule`/`timeZone` below if 7am ET isn't the right time —
+ * this was a reasonable default, not a confirmed user preference.
+ */
+export const dailyBriefing = onSchedule(
+  {
+    schedule: "0 7 * * *",
+    timeZone: "America/New_York",
+    region: FUNCTION_REGION,
+    secrets: [AI_GATEWAY_API_KEY],
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const [openTasksSnap, pendingRemindersSnap, activeProjectsSnap] = await Promise.all([
+      db.collectionGroup("tasks").where("status", "==", "todo").get(),
+      db.collection("reminders").where("status", "==", "pending").get(),
+      db.collection("projects").where("status", "==", "active").get(),
+    ]);
+
+    const taskLines = openTasksSnap.docs.map((d) => `- ${d.data().title}`).join("\n") || "(none)";
+    const reminderLines =
+      pendingRemindersSnap.docs
+        .map((d) => `- ${d.data().text} (due ${(d.data().dueAt as Timestamp).toDate().toLocaleString()})`)
+        .join("\n") || "(none)";
+    const projectLines =
+      activeProjectsSnap.docs.map((d) => `- ${d.data().name}: ${d.data().progress ?? 0}% complete`).join("\n") ||
+      "(none)";
+
+    const { text } = await generateText({
+      model: "anthropic/claude-sonnet-4.6",
+      system:
+        "You write a short, practical morning briefing for a single user's personal AI operating system. Be concise — a few sentences plus short bullet highlights, not an exhaustive list. Prioritize what matters most today. Plain, direct tone, no fluff.",
+      prompt: `Today's date: ${new Date().toDateString()}\n\nOpen tasks:\n${taskLines}\n\nPending reminders:\n${reminderLines}\n\nActive projects:\n${projectLines}\n\nWrite today's briefing.`,
+    });
+
+    await saveBriefing("daily", text);
+  }
+);
+
+/**
+ * Runs every Monday at 8am ET. Reviews what actually happened in the last 7
+ * days (completed tasks, decisions, research) rather than what's pending.
+ */
+export const weeklyReview = onSchedule(
+  {
+    schedule: "0 8 * * 1",
+    timeZone: "America/New_York",
+    region: FUNCTION_REGION,
+    secrets: [AI_GATEWAY_API_KEY],
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    // Plain collectionGroup reads (no where filter) don't need a composite
+    // index — filtering by date happens in memory instead.
+    const [doneTasksSnap, decisionsSnap, researchSnap, activeProjectsSnap] = await Promise.all([
+      db.collectionGroup("tasks").where("status", "==", "done").get(),
+      db.collectionGroup("decisions").get(),
+      db.collectionGroup("research").get(),
+      db.collection("projects").where("status", "==", "active").get(),
+    ]);
+
+    const recentlyDone = doneTasksSnap.docs.filter((d) => {
+      const updatedAt = d.data().updatedAt as Timestamp | null | undefined;
+      return updatedAt != null && updatedAt.toMillis() > weekAgo;
+    });
+    const recentDecisions = decisionsSnap.docs.filter(
+      (d) => ((d.data().decidedAt as Timestamp | undefined)?.toMillis() ?? 0) > weekAgo
+    );
+    const recentResearch = researchSnap.docs.filter(
+      (d) => ((d.data().createdAt as Timestamp | undefined)?.toMillis() ?? 0) > weekAgo
+    );
+
+    const doneLines = recentlyDone.map((d) => `- ${d.data().title}`).join("\n") || "(none)";
+    const decisionLines =
+      recentDecisions.map((d) => `- ${d.data().question} → ${d.data().recommended}`).join("\n") || "(none)";
+    const researchLines = recentResearch.map((d) => `- ${d.data().title}`).join("\n") || "(none)";
+    const projectLines =
+      activeProjectsSnap.docs.map((d) => `- ${d.data().name}: ${d.data().progress ?? 0}% complete`).join("\n") ||
+      "(none)";
+
+    const { text } = await generateText({
+      model: "anthropic/claude-sonnet-4.6",
+      system:
+        "You write a short weekly review for a single user's personal AI operating system, looking back at the past 7 days. Highlight what got done, notable decisions, and active project momentum. A few short paragraphs or bullet groups, not exhaustive. Plain, direct tone.",
+      prompt: `Week ending: ${new Date().toDateString()}\n\nTasks completed this week:\n${doneLines}\n\nDecisions made this week:\n${decisionLines}\n\nResearch logged this week:\n${researchLines}\n\nActive projects:\n${projectLines}\n\nWrite this week's review.`,
+    });
+
+    await saveBriefing("weekly", text);
   }
 );

@@ -1,6 +1,7 @@
 {
   "name": "functions",
   "private": true,
+  "type": "module",
   "engines": {
     "node": "20"
   },
@@ -10,6 +11,7 @@
     "deploy": "firebase deploy --only functions"
   },
   "dependencies": {
+    "ai": "^7.0.31",
     "firebase-admin": "^13.0.0",
     "firebase-functions": "^6.0.0"
   },

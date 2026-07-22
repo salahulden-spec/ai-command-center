@@ -10,6 +10,7 @@ import {
   Network,
   BookOpen,
   Zap,
+  Sunrise,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,6 +22,7 @@ export interface NavLink {
 
 export const PRIMARY_NAV: NavLink[] = [
   { href: "/", label: "Home", icon: Home },
+  { href: "/briefing", label: "Briefing", icon: Sunrise },
   { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/tasks", label: "Tasks", icon: ListChecks },
   { href: "/people", label: "People", icon: Users },
