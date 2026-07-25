@@ -31,6 +31,7 @@ export async function createReminder(input: { text: string; dueAt: Date }) {
     dueAt: Timestamp.fromDate(input.dueAt),
     status: "pending",
     relatedProjectId: null,
+    notifiedAt: null,
     createdAt: serverTimestamp(),
   } as unknown as Reminder);
 }

@@ -14,6 +14,7 @@ import type { PendingAction, PendingActionType } from "@/types";
 import { createProject } from "./projects";
 import { createTask, updateTaskStatus } from "./tasks";
 import { createReminder, markReminderDone } from "./reminders";
+import { createPerson } from "./people";
 import { createMemory } from "./memory";
 import { createDecision } from "./decisions";
 import { createResearchEntry } from "./research";
@@ -60,6 +61,9 @@ export async function approvePendingAction(action: PendingAction) {
       await createReminder({ text, dueAt: new Date(dueAt) });
       break;
     }
+    case "createPerson":
+      await createPerson(action.payload as { name: string; company: string; notes: string });
+      break;
     case "completeTask": {
       const { taskId, projectId } = action.payload as {
         taskId: string;

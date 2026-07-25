@@ -48,6 +48,7 @@ export interface Reminder {
   dueAt: Timestamp;
   status: ReminderStatus;
   relatedProjectId: string | null;
+  notifiedAt: Timestamp | null;
   createdAt: Timestamp;
 }
 
@@ -167,6 +168,7 @@ export type PendingActionType =
   | "createProject"
   | "createTask"
   | "createReminder"
+  | "createPerson"
   | "completeTask"
   | "completeReminder"
   | "saveMemory"

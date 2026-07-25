@@ -3,6 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { generateText } from "ai";
+import { Resend } from "resend";
 
 initializeApp();
 const db = getFirestore();
@@ -13,6 +14,13 @@ const db = getFirestore();
 // (`firebase functions:secrets:set AI_GATEWAY_API_KEY`) and bound per
 // function below so it lands in process.env at runtime.
 const AI_GATEWAY_API_KEY = defineSecret("AI_GATEWAY_API_KEY");
+
+// Set via `firebase functions:secrets:set RESEND_API_KEY` with a Resend
+// (resend.com) API key. Sending "from" the default onboarding@resend.dev
+// address works without verifying a domain, fine for this single-user app's
+// volume — swap in a verified custom domain in Resend later if desired.
+const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
+const REMINDER_EMAIL = "salahulden@gmail.com";
 
 // Firestore triggers (Eventarc) aren't supported in me-central2, the region
 // this project's Firestore database lives in — real-time Firestore-triggered
@@ -61,6 +69,7 @@ async function runStep(step: WorkflowStep, triggerDoc: Record<string, unknown>) 
       dueAt,
       status: "pending",
       relatedProjectId: null,
+      notifiedAt: null,
       createdAt: FieldValue.serverTimestamp(),
     });
   }
@@ -120,6 +129,51 @@ export const pollTaskWorkflows = onSchedule(
     }
 
     await POLL_STATE_DOC.set({ lastPolledAt: pollStartedAt });
+  }
+);
+
+/**
+ * Runs every 5 minutes: finds pending reminders whose dueAt has passed and
+ * that haven't been emailed yet, and sends one email per reminder via
+ * Resend. `notifiedAt` (set right after a successful send) is what stops a
+ * reminder from being emailed again on the next poll — status stays
+ * "pending" until the user marks it done themselves, since receiving the
+ * email isn't the same as having handled it.
+ *
+ * A plain equality-only query (status == "pending") avoids needing a
+ * composite index — the dueAt/notifiedAt filtering happens in memory,
+ * same approach as weeklyReview below.
+ */
+export const sendDueReminderEmails = onSchedule(
+  { schedule: "every 5 minutes", region: FUNCTION_REGION, secrets: [RESEND_API_KEY] },
+  async () => {
+    const now = Timestamp.now();
+    const pendingSnap = await db.collection("reminders").where("status", "==", "pending").get();
+    const due = pendingSnap.docs.filter((snap) => {
+      const data = snap.data();
+      const notifiedAt = data.notifiedAt as Timestamp | null | undefined;
+      const dueAt = data.dueAt as Timestamp | undefined;
+      return notifiedAt == null && dueAt != null && dueAt.toMillis() <= now.toMillis();
+    });
+
+    if (due.length === 0) return;
+
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    for (const snap of due) {
+      const text = snap.data().text as string;
+      try {
+        await resend.emails.send({
+          from: "AI Command Center <onboarding@resend.dev>",
+          to: REMINDER_EMAIL,
+          subject: `Reminder: ${text}`,
+          text: `${text}\n\nDue: ${(snap.data().dueAt as Timestamp).toDate().toLocaleString()}`,
+        });
+        await snap.ref.update({ notifiedAt: FieldValue.serverTimestamp() });
+      } catch (err) {
+        console.error(`Failed to send reminder email for ${snap.id}:`, err);
+      }
+    }
   }
 );
 

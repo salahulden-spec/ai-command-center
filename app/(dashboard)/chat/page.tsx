@@ -29,6 +29,7 @@ import {
   markReminderDone,
   listPendingRemindersOnce,
 } from "@/lib/firestore/reminders";
+import { createPerson } from "@/lib/firestore/people";
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
 import { createDecision } from "@/lib/firestore/decisions";
 import { createResearchEntry } from "@/lib/firestore/research";
@@ -148,6 +149,8 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Create task "${input.title}"`;
     case "createReminder":
       return `Remind: "${input.text}"`;
+    case "createPerson":
+      return `Add contact "${input.name}"`;
     case "completeTask":
       return `Mark task "${input.taskTitle}" as done`;
     case "completeReminder":
@@ -395,6 +398,8 @@ function ChatConversation({
               } else if (mutationType === "createReminder") {
                 const { text, dueAt } = mutationPayload as { text: string; dueAt: string };
                 await createReminder({ text, dueAt: new Date(dueAt) });
+              } else if (mutationType === "createPerson") {
+                await createPerson(mutationPayload as { name: string; company: string; notes: string });
               } else if (mutationType === "completeTask") {
                 const { taskId, projectId } = mutationPayload as {
                   taskId: string;

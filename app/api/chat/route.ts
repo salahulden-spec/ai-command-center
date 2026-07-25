@@ -29,6 +29,14 @@ const tools = {
       dueAt: z.string().describe("ISO 8601 date-time when the reminder is due"),
     }),
   }),
+  createPerson: tool({
+    description: "Save a person to the user's contacts when they mention someone worth tracking (a name plus any company/context).",
+    inputSchema: z.object({
+      name: z.string().describe("The person's name"),
+      company: z.string().default("").describe("Their company/affiliation, if mentioned"),
+      notes: z.string().default("").describe("Any other context about them worth remembering"),
+    }),
+  }),
   listProjects: tool({
     description:
       "List the user's existing projects (id, name, status). Call this before creating a task that should attach to a project, so you can resolve the project name the user mentions to its real ID — never invent a project ID.",
@@ -175,7 +183,7 @@ function buildSystemPrompt() {
   return `You are the assistant inside AI Command Center, the user's private executive assistant app.
 The current date and time is ${now.toISOString()} (${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}). Use this as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "next Friday") — never guess or assume a different year.
 When creating a reminder, output dueAt as a plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), reflecting the user's own wall-clock time, not UTC.
-You can create projects, tasks, and reminders, and mark tasks/reminders complete, using the available tools when the user asks you to.
+You can create projects, tasks, reminders, and people (contacts), and mark tasks/reminders complete, using the available tools when the user asks you to.
 The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-only and always run immediately — use them freely to look up real IDs before referencing a project, task, or reminder by name.
 CRITICAL: IDs are opaque random Firestore strings (e.g. "e3QIlmSjbpg46UHWRt0Q") — never construct, guess, or slugify one from a name (e.g. "websiteRedesignId" is never valid). If a task requires an existing project/task/reminder's ID and you have not just seen it in an actual tool result, call the matching list* tool FIRST, wait for its real output, and only then call the mutating tool with the exact id string from that result — do not call the lookup and the action that depends on it in the same step.
 Every create/complete/saveMemory tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
