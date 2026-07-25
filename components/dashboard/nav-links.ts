@@ -11,6 +11,7 @@ import {
   BookOpen,
   Zap,
   Sunrise,
+  BarChart3,
   type LucideIcon,
 } from "lucide-react";
 
@@ -36,6 +37,7 @@ export const SECONDARY_NAV: NavLink[] = [
   { href: "/mind", label: "Mind View", icon: Network },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/automations", label: "Automations", icon: Zap },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
 export const MOBILE_NAV: NavLink[] = [
