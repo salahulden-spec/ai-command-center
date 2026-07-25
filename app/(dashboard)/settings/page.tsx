@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { onSnapshot } from "firebase/firestore";
 import { useAuth } from "@/hooks/use-auth";
 import { userSettingsRef, setAiMode } from "@/lib/firestore/user-settings";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -12,11 +13,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { exportAllData, downloadBackup } from "@/lib/backup/export";
+import { parseBackupFile, summarizeBackup, importBackup, type BackupFile } from "@/lib/backup/import";
 import type { AiMode } from "@/types";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
   const [aiMode, setLocalAiMode] = useState<AiMode>("ask");
+  const [exporting, setExporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState<BackupFile | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -24,6 +43,42 @@ export default function SettingsPage() {
       setLocalAiMode(snap.data()?.aiMode ?? "ask");
     });
   }, [user]);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      downloadBackup(await exportAllData());
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleFileSelected = async (file: File | undefined) => {
+    if (!file) return;
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      setPendingImport(parseBackupFile(text));
+    } catch {
+      setImportError("Couldn't read that file — make sure it's a backup exported from this app.");
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!pendingImport) return;
+    setImporting(true);
+    try {
+      const count = await importBackup(pendingImport);
+      setImportResult(`Restored ${count} record${count === 1 ? "" : "s"}.`);
+    } catch {
+      setImportError("Import failed partway through — some records may have been restored already.");
+    } finally {
+      setImporting(false);
+      setPendingImport(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -55,6 +110,60 @@ export default function SettingsPage() {
           </Select>
         </CardContent>
       </Card>
+
+      <Card className="glow-border max-w-lg border bg-card/60 backdrop-blur-sm">
+        <CardHeader>
+          <CardTitle className="text-base">Backup &amp; Restore</CardTitle>
+          <CardDescription>
+            Export everything as a single JSON file, or restore from a previous export. Importing
+            only adds records — it never overwrites or deletes anything already here.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" disabled={exporting} onClick={() => void handleExport()}>
+              {exporting ? "Exporting..." : "Export all data"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              Import backup
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => void handleFileSelected(e.target.files?.[0])}
+            />
+          </div>
+          {importError && <p className="text-sm text-destructive">{importError}</p>}
+          {importResult && <p className="text-sm text-muted-foreground">{importResult}</p>}
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={pendingImport !== null} onOpenChange={(open) => !open && setPendingImport(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Import this backup?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This adds the following as new records. Nothing existing will be changed or removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+            {pendingImport &&
+              summarizeBackup(pendingImport).map((entry) => (
+                <li key={entry.label}>
+                  {entry.count} — {entry.label}
+                </li>
+              ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={importing} onClick={() => void handleConfirmImport()}>
+              {importing ? "Importing..." : "Import"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card className="glow-border max-w-lg border bg-card/60 backdrop-blur-sm">
         <CardHeader>
