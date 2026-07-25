@@ -164,6 +164,28 @@ export interface Briefing {
   createdAt: Timestamp;
 }
 
+export interface GoogleIntegration {
+  refreshToken: string;
+  scope: string;
+  connectedAt: Timestamp;
+}
+
+export interface CalendarEvent {
+  id: string;
+  summary: string;
+  start: string | null;
+  end: string | null;
+  htmlLink: string;
+}
+
+export interface GmailMessage {
+  id: string;
+  subject: string;
+  from: string;
+  snippet: string;
+  receivedAt: string | null;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"

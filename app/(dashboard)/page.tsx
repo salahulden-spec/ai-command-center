@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -12,6 +12,8 @@ import {
   Mic,
   ArrowUp,
   MessageCircle,
+  Calendar,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
@@ -20,9 +22,12 @@ import { allTasksQuery } from "@/lib/firestore/tasks";
 import { inboxQuery } from "@/lib/firestore/inbox";
 import { remindersQuery } from "@/lib/firestore/reminders";
 import { conversationsQuery } from "@/lib/firestore/conversations";
+import { getGoogleIntegrationOnce } from "@/lib/firestore/integrations";
+import { fetchCalendarEvents, fetchGmailMessages } from "@/lib/google/client";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { AiOrb } from "@/components/dashboard/ai-orb";
 import { cn } from "@/lib/utils";
+import type { CalendarEvent, GmailMessage } from "@/types";
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -81,6 +86,22 @@ export default function DashboardPage() {
   const { supported: micSupported, listening, toggle: toggleMic } = useSpeechRecognition(
     (text) => setInput((prev) => (prev ? `${prev} ${text}` : text))
   );
+
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [gmailMessages, setGmailMessages] = useState<GmailMessage[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void getGoogleIntegrationOnce(user.uid).then((integration) => {
+      if (cancelled || !integration) return;
+      void fetchCalendarEvents(integration.refreshToken).then((e) => !cancelled && setEvents(e));
+      void fetchGmailMessages(integration.refreshToken).then((m) => !cancelled && setGmailMessages(m));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,6 +219,60 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {events.length > 0 && (
+        <div>
+          <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-primary">
+            Upcoming Events
+          </h2>
+          <div className="flex flex-col gap-2">
+            {events.slice(0, 5).map((event) => (
+              <a
+                key={event.id}
+                href={event.htmlLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="glow-border flex items-center gap-3 rounded-md border bg-card/40 px-4 py-3 transition-colors hover:bg-card/70"
+              >
+                <Calendar className="h-4 w-4 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1 truncate text-sm">{event.summary}</span>
+                {event.start && (
+                  <span className="shrink-0 font-mono text-[0.65rem] text-muted-foreground">
+                    {new Date(event.start).toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                )}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {gmailMessages.length > 0 && (
+        <div>
+          <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-primary">
+            Recent Emails
+          </h2>
+          <div className="flex flex-col gap-2">
+            {gmailMessages.map((message) => (
+              <div
+                key={message.id}
+                className="glow-border flex items-center gap-3 rounded-md border bg-card/40 px-4 py-3"
+              >
+                <Mail className="h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{message.subject}</p>
+                  <p className="truncate text-xs text-muted-foreground">{message.from}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="mb-3 flex items-center justify-between">
