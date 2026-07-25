@@ -3,6 +3,7 @@ import {
   doc,
   addDoc,
   deleteDoc,
+  getDocs,
   serverTimestamp,
   orderBy,
   query,
@@ -32,4 +33,9 @@ export async function createPerson(input: { name: string; company: string; notes
 
 export async function deletePerson(personId: string) {
   return deleteDoc(doc(db, "people", personId));
+}
+
+export async function listPeopleOnce() {
+  const snap = await getDocs(peopleQuery());
+  return snap.docs.map((d) => d.data());
 }

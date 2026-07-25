@@ -38,6 +38,7 @@ import { analyzeAdHocFile } from "@/lib/documents/process";
 import { isSupportedDocumentFile } from "@/lib/documents/extract-client";
 import { createWorkflow } from "@/lib/firestore/workflows";
 import { embedText } from "@/lib/ai/embed-client";
+import { useVoiceInput } from "@/hooks/use-voice-input";
 import {
   createConversation,
   updateConversationMessages,
@@ -51,7 +52,7 @@ import type {
   PendingActionType,
   WorkflowStep,
 } from "@/types";
-import { Paperclip, X as XIcon } from "lucide-react";
+import { Mic, Paperclip, X as XIcon } from "lucide-react";
 
 const READ_TOOLS = new Set([
   "listProjects",
@@ -238,6 +239,10 @@ function ChatConversation({
   const attachInputRef = useRef<HTMLInputElement>(null);
   const conversationIdRef = useRef(initialConversationId);
   const autoSentRef = useRef(false);
+
+  const voice = useVoiceInput((text) => {
+    setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -653,6 +658,18 @@ function ChatConversation({
         >
           <Paperclip className="h-4 w-4" />
         </Button>
+        {voice.supported && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => (voice.listening ? voice.stop() : voice.start())}
+            aria-label={voice.listening ? "Stop voice input" : "Start voice input"}
+            className={cn(voice.listening && "border-primary text-primary animate-pulse")}
+          >
+            <Mic className="h-4 w-4" />
+          </Button>
+        )}
         <Textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

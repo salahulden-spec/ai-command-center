@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, MessageCircle, Settings, LogOut } from "lucide-react";
+import { Bell, MessageCircle, Search, Settings, LogOut } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { BottomNav } from "@/components/dashboard/bottom-nav";
+import { CommandPalette } from "@/components/command-palette/command-palette";
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, loading, isAllowed, signOut } = useAuth();
   const router = useRouter();
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     if (loading) return;
@@ -19,6 +21,17 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       router.replace("/login");
     }
   }, [loading, user, isAllowed, router]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   if (loading || !user || !isAllowed) {
     return (
@@ -31,7 +44,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen">
-      <Sidebar user={user} onSignOut={() => void signOut()} />
+      <Sidebar user={user} onSignOut={() => void signOut()} onOpenPalette={() => setPaletteOpen(true)} />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
 
       <header
         className="glow-border sticky top-0 z-30 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur-sm md:hidden"
@@ -41,6 +55,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           AI Command Center
         </span>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
+            aria-label="Search"
+          >
+            <Search className="h-4 w-4" />
+          </button>
           <Link
             href="/reminders"
             className="rounded-md p-2 text-muted-foreground hover:text-foreground"

@@ -2,13 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PRIMARY_NAV, SECONDARY_NAV, isNavActive } from "./nav-links";
 import type { User } from "firebase/auth";
 
-export function Sidebar({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+export function Sidebar({
+  user,
+  onSignOut,
+  onOpenPalette,
+}: {
+  user: User;
+  onSignOut: () => void;
+  onOpenPalette: () => void;
+}) {
   const pathname = usePathname();
 
   return (
@@ -19,7 +27,22 @@ export function Sidebar({ user, onSignOut }: { user: User; onSignOut: () => void
         </span>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 px-3">
+      <div className="px-3">
+        <button
+          onClick={onOpenPalette}
+          className="glow-border flex w-full items-center justify-between rounded-md border bg-card/40 px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span className="flex items-center gap-2">
+            <Search className="h-3.5 w-3.5" />
+            Search...
+          </span>
+          <kbd className="rounded border border-border/60 bg-background px-1.5 py-0.5 font-mono text-[0.6rem]">
+            ⌘K
+          </kbd>
+        </button>
+      </div>
+
+      <nav className="mt-3 flex flex-1 flex-col gap-1 px-3">
         {PRIMARY_NAV.map((link) => {
           const active = isNavActive(pathname, link.href);
           const Icon = link.icon;
