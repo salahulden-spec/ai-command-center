@@ -92,19 +92,19 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">{project.name}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-semibold">{project.name}</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             {project.description || "No description"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
           <Select
             value={project.status}
             onValueChange={(status) => void updateProject(id, { status: status as Project["status"] })}
           >
-            <SelectTrigger className="w-36 font-mono text-xs uppercase">
+            <SelectTrigger className="w-full font-mono text-xs uppercase sm:w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -166,20 +166,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           {tasks.map((task) => (
             <div
               key={task.id}
-              className="glow-border flex items-center justify-between rounded-md border bg-card/40 px-3 py-2"
+              className="glow-border flex items-center justify-between gap-3 rounded-md border bg-card/40 px-3 py-2"
             >
               <button
                 onClick={() =>
                   void updateTaskStatus(id, task.id, task.status === "done" ? "todo" : "done")
                 }
                 className={cn(
-                  "text-sm",
+                  "min-w-0 flex-1 break-words text-left text-sm",
                   task.status === "done" && "text-muted-foreground line-through"
                 )}
               >
                 {task.title}
               </button>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <Badge variant="outline" className="font-mono text-[0.6rem] uppercase">
                   {task.status}
                 </Badge>
@@ -205,8 +205,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 key={entry.id}
                 className="glow-border flex flex-col gap-1 rounded-md border bg-card/40 px-4 py-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium">{entry.title}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 flex-1 break-words text-sm font-medium">{entry.title}</p>
                   <button
                     onClick={() => void deleteResearchEntry(id, entry.id)}
                     className="text-muted-foreground hover:text-destructive"
@@ -240,8 +240,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 key={decision.id}
                 className="glow-border flex flex-col gap-2 rounded-md border bg-card/40 px-4 py-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium">{decision.question}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="min-w-0 flex-1 break-words text-sm font-medium">{decision.question}</p>
                   <button
                     onClick={() => void deleteDecision(id, decision.id)}
                     className="text-muted-foreground hover:text-destructive"
@@ -250,7 +250,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <Badge className="font-mono text-[0.6rem] uppercase">
                     {decision.recommended}
                   </Badge>
@@ -296,9 +296,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               key={docItem.id}
               className="glow-border flex flex-col gap-2 rounded-md border bg-card/40 px-4 py-3"
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium">{docItem.fileName}</p>
-                <div className="flex items-center gap-2">
+              <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0 flex-1 break-words text-sm font-medium">{docItem.fileName}</p>
+                <div className="flex shrink-0 items-center gap-2">
                   <Badge
                     variant={docItem.status === "failed" ? "destructive" : "outline"}
                     className="font-mono text-[0.6rem] uppercase"

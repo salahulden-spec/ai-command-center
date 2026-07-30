@@ -52,20 +52,20 @@ export default function TasksPage() {
           {tasks.map((task) => (
             <div
               key={task.id}
-              className="glow-border flex items-center justify-between rounded-md border bg-card/40 px-3 py-2"
+              className="glow-border flex items-center justify-between gap-3 rounded-md border bg-card/40 px-3 py-2"
             >
               <button
                 onClick={() =>
                   void updateTaskStatus(null, task.id, task.status === "done" ? "todo" : "done")
                 }
                 className={cn(
-                  "text-sm",
+                  "min-w-0 flex-1 break-words text-left text-sm",
                   task.status === "done" && "text-muted-foreground line-through"
                 )}
               >
                 {task.title}
               </button>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <Badge variant="outline" className="font-mono text-[0.6rem] uppercase">
                   {task.status}
                 </Badge>

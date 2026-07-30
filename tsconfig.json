@@ -11,6 +11,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Node's --experimental-strip-types does no extension resolution, so the
+    // .mts tests must import "./graph.ts" verbatim. Safe here because noEmit
+    // is set — nothing is written that could carry a bad specifier.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [

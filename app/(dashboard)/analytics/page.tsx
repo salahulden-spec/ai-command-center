@@ -80,19 +80,22 @@ export default function AnalyticsPage() {
           {maxDaily === 1 && metrics.dailyCompletions.every((d) => d.count === 0) ? (
             <p className="text-sm text-muted-foreground">No completed tasks in this window yet.</p>
           ) : (
-            <div className="flex h-32 items-end gap-1.5">
-              {metrics.dailyCompletions.map((d) => (
-                <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
-                  <div
-                    className="w-full rounded-t-sm bg-primary/70 transition-all"
-                    style={{ height: `${Math.max(4, (d.count / maxDaily) * 100)}%` }}
-                    title={`${d.date}: ${d.count}`}
-                  />
-                  <span className="font-mono text-[0.55rem] text-muted-foreground">
-                    {d.date.split(" ")[0]}
-                  </span>
-                </div>
-              ))}
+            // Scrolls rather than squeezing 14 bars into a phone width.
+            <div className="-mx-1 overflow-x-auto px-1">
+              <div className="flex h-32 min-w-[26rem] items-end gap-1.5">
+                {metrics.dailyCompletions.map((d) => (
+                  <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
+                    <div
+                      className="w-full rounded-t-sm bg-primary/70 transition-all"
+                      style={{ height: `${Math.max(4, (d.count / maxDaily) * 100)}%` }}
+                      title={`${d.date}: ${d.count}`}
+                    />
+                    <span className="font-mono text-[0.55rem] text-muted-foreground">
+                      {d.date.split(" ")[0]}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </CardContent>

@@ -61,10 +61,10 @@ export default function InboxPage() {
             {unprocessed.map((item) => (
               <div
                 key={item.id}
-                className="glow-border flex items-center justify-between rounded-md border bg-card/40 px-3 py-2"
+                className="glow-border flex items-center justify-between gap-3 rounded-md border bg-card/40 px-3 py-2"
               >
-                <span className="text-sm">{item.content}</span>
-                <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 break-words text-sm">{item.content}</span>
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     onClick={() => void markInboxItemOrganized(item.id)}
                     className="text-muted-foreground hover:text-primary"
@@ -92,12 +92,14 @@ export default function InboxPage() {
               {organized.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-muted-foreground"
+                  className="flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-muted-foreground"
                 >
-                  <span className="text-sm line-through">{item.content}</span>
+                  <span className="min-w-0 flex-1 break-words text-sm line-through">
+                    {item.content}
+                  </span>
                   <button
                     onClick={() => void deleteInboxItem(item.id)}
-                    className="hover:text-destructive"
+                    className="shrink-0 hover:text-destructive"
                     aria-label="Delete"
                   >
                     <X className="h-3.5 w-3.5" />

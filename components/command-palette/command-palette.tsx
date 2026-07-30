@@ -27,6 +27,15 @@ export function CommandPalette({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
+      {/* Mounted only while open so the query and results reset on every launch. */}
+      {open && <PaletteBody onOpenChange={onOpenChange} />}
+    </CommandDialog>
+  );
+}
+
+function PaletteBody({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -35,16 +44,14 @@ export function CommandPalette({
   const [people, setPeople] = useState<Person[]>([]);
 
   // Data only needs to be reasonably fresh for a search popover, and
-  // refetching on every open (rather than subscribing permanently) avoids
+  // fetching once per launch (rather than subscribing permanently) avoids
   // holding four extra live Firestore listeners open for the whole session.
   useEffect(() => {
-    if (!open) return;
-    setSearch("");
     void listProjectsOnce().then(setProjects);
     void listOpenTasksOnce().then(setTasks);
     void listPendingRemindersOnce().then(setReminders);
     void listPeopleOnce().then(setPeople);
-  }, [open]);
+  }, []);
 
   const go = (href: string) => {
     onOpenChange(false);
@@ -59,16 +66,16 @@ export function CommandPalette({
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <Command shouldFilter>
-        <CommandInput
-          placeholder="Search or ask anything..."
-          value={search}
-          onValueChange={setSearch}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && e.metaKey) askAi();
-          }}
-        />
+    <Command shouldFilter>
+      <CommandInput
+        placeholder="Search or ask anything..."
+        value={search}
+        onValueChange={setSearch}
+        onKeyDown={(e) => {
+          // Ctrl for Windows/Linux, Cmd for macOS.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) askAi();
+        }}
+      />
         <CommandList>
           <CommandEmpty>No results.</CommandEmpty>
 
@@ -150,7 +157,6 @@ export function CommandPalette({
             </CommandGroup>
           )}
         </CommandList>
-      </Command>
-    </CommandDialog>
+    </Command>
   );
 }

@@ -37,8 +37,8 @@ export default function RemindersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Reminders</h1>
           <p className="text-sm text-muted-foreground">Things to do at a specific time.</p>
         </div>
@@ -85,15 +85,15 @@ export default function RemindersPage() {
             {pending.map((reminder) => (
               <div
                 key={reminder.id}
-                className="glow-border flex items-center justify-between rounded-md border bg-card/40 px-3 py-2"
+                className="glow-border flex items-center justify-between gap-3 rounded-md border bg-card/40 px-3 py-2"
               >
-                <div className="flex flex-col">
-                  <span className="text-sm">{reminder.text}</span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="break-words text-sm">{reminder.text}</span>
                   <span className="font-mono text-[0.65rem] text-muted-foreground">
                     {reminder.dueAt.toDate().toLocaleString()}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => void markReminderDone(reminder.id)}>
                     Done
                   </Button>
@@ -118,13 +118,15 @@ export default function RemindersPage() {
                 <div
                   key={reminder.id}
                   className={cn(
-                    "flex items-center justify-between rounded-md border border-border/40 px-3 py-2 text-muted-foreground"
+                    "flex items-center justify-between gap-3 rounded-md border border-border/40 px-3 py-2 text-muted-foreground"
                   )}
                 >
-                  <span className="text-sm line-through">{reminder.text}</span>
+                  <span className="min-w-0 flex-1 break-words text-sm line-through">
+                    {reminder.text}
+                  </span>
                   <button
                     onClick={() => void deleteReminder(reminder.id)}
-                    className="hover:text-destructive"
+                    className="shrink-0 hover:text-destructive"
                     aria-label="Delete"
                   >
                     <X className="h-3.5 w-3.5" />

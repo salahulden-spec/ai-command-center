@@ -177,33 +177,39 @@ export default function ChatPage() {
   );
 }
 
-/** Resolves the initial message list (from a past conversation, if ?id= is present) before mounting the actual chat UI — useChat only reads its initial messages once, on mount. */
+/**
+ * Resolves the initial message list (from a past conversation, if ?id= is present)
+ * before mounting the actual chat UI — useChat only reads its initial messages
+ * once, on mount.
+ *
+ * The loaded messages are stored alongside the conversation id they belong to,
+ * so "are we ready" is derived during render. Switching conversations can never
+ * momentarily hand the previous thread's messages to a fresh useChat.
+ */
 function ChatPageLoader() {
   const searchParams = useSearchParams();
   const conversationId = searchParams.get("id");
   const initialText = searchParams.get("q");
-  const [initialMessages, setInitialMessages] = useState<UIMessage[] | null>(null);
-  const [ready, setReady] = useState(false);
+  const [loaded, setLoaded] = useState<{ id: string; messages: UIMessage[] } | null>(null);
 
   useEffect(() => {
+    if (!conversationId) return;
     let cancelled = false;
-    setReady(false);
-    if (!conversationId) {
-      setInitialMessages([]);
-      setReady(true);
-      return;
-    }
     getConversationOnce(conversationId).then((messages) => {
-      if (cancelled) return;
-      setInitialMessages(messages ?? []);
-      setReady(true);
+      if (!cancelled) setLoaded({ id: conversationId, messages: messages ?? [] });
     });
     return () => {
       cancelled = true;
     };
   }, [conversationId]);
 
-  if (!ready || initialMessages === null) {
+  const initialMessages = !conversationId
+    ? []
+    : loaded?.id === conversationId
+      ? loaded.messages
+      : null;
+
+  if (initialMessages === null) {
     return <Skeleton className="h-[calc(100vh-8.5rem)] w-full" />;
   }
 

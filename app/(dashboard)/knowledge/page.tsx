@@ -85,15 +85,18 @@ export default function KnowledgePage() {
               key={memory.id}
               className="glow-border flex items-center justify-between gap-4 rounded-md border bg-card/40 px-3 py-2"
             >
-              <div className="flex items-center gap-3">
-                <Badge variant="outline" className="font-mono text-[0.6rem] uppercase">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <Badge
+                  variant="outline"
+                  className="mt-0.5 shrink-0 font-mono text-[0.6rem] uppercase"
+                >
                   {memory.type}
                 </Badge>
-                <span className="text-sm">{memory.content}</span>
+                <span className="min-w-0 break-words text-sm">{memory.content}</span>
               </div>
               <button
                 onClick={() => void deleteMemory(memory.id)}
-                className="text-muted-foreground hover:text-destructive"
+                className="shrink-0 text-muted-foreground hover:text-destructive"
                 aria-label="Delete memory"
               >
                 <X className="h-3.5 w-3.5" />

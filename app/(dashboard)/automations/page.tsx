@@ -23,7 +23,7 @@ export default function AutomationsPage() {
         <h1 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Automations</h1>
         <p className="text-sm text-muted-foreground">
           Standing workflows that run automatically. Create one by describing it to the assistant
-          in Chat — new workflows start disabled, enable here once you've reviewed them.
+          in Chat — new workflows start disabled, enable here once you&apos;ve reviewed them.
         </p>
       </div>
 
@@ -41,17 +41,17 @@ export default function AutomationsPage() {
               key={workflow.id}
               className="glow-border flex flex-col gap-2 rounded-md border bg-card/40 px-4 py-3"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium">{workflow.name}</p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <p className="min-w-0 break-words text-sm font-medium">{workflow.name}</p>
                   <Badge
                     variant={workflow.enabled ? "default" : "outline"}
-                    className="font-mono text-[0.6rem] uppercase"
+                    className="shrink-0 font-mono text-[0.6rem] uppercase"
                   >
                     {workflow.enabled ? "Enabled" : "Disabled"}
                   </Badge>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <Button
                     size="sm"
                     variant={workflow.enabled ? "outline" : "default"}

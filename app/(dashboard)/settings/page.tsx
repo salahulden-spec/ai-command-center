@@ -64,31 +64,43 @@ export default function SettingsPage() {
   }, [user]);
 
   // Google redirects back here with ?code=... after the user grants consent.
+  // The code is single-use, so it's stripped from the URL before the exchange
+  // starts — otherwise a refresh would retry an already-spent code and error.
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("code");
     if (!code || !user) return;
     router.replace("/settings", { scroll: false });
-    setGoogleBusy(true);
-    setGoogleError(null);
-    (async () => {
-      const token = await auth.currentUser?.getIdToken();
-      const res = await fetch("/api/integrations/google/exchange", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ code, redirectUri: googleRedirectUri() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setGoogleError(data.error ?? "Couldn't connect Google — try again.");
-        return;
+
+    let cancelled = false;
+    void (async () => {
+      setGoogleBusy(true);
+      setGoogleError(null);
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        const res = await fetch("/api/integrations/google/exchange", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ code, redirectUri: googleRedirectUri() }),
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setGoogleError(data.error ?? "Couldn't connect Google — try again.");
+          return;
+        }
+        await saveGoogleIntegration(user.uid, data.refreshToken, data.scope);
+        if (!cancelled) setGoogleConnected(true);
+      } catch {
+        if (!cancelled) setGoogleError("Couldn't connect Google — try again.");
+      } finally {
+        if (!cancelled) setGoogleBusy(false);
       }
-      await saveGoogleIntegration(user.uid, data.refreshToken, data.scope);
-      setGoogleConnected(true);
-    })()
-      .catch(() => setGoogleError("Couldn't connect Google — try again."))
-      .finally(() => setGoogleBusy(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, router]);
 
   const handleDisconnectGoogle = async () => {
     if (!user) return;

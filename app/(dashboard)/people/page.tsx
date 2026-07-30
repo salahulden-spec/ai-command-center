@@ -37,8 +37,8 @@ export default function PeoplePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">People</h1>
           <p className="text-sm text-muted-foreground">Contacts tied to your work.</p>
         </div>

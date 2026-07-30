@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
 interface SpeechRecognitionResultLike {
   0: { transcript: string };
@@ -32,15 +32,21 @@ function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null 
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+/** Whether the API exists never changes after load, so there is nothing to subscribe to. */
+const subscribeToNothing = () => () => {};
+const getSupportedSnapshot = () => getSpeechRecognitionConstructor() !== null;
+/** The server can't know — render as unsupported so markup matches the first client paint. */
+const getServerSnapshot = () => false;
+
 /** Browser speech-to-text (Web Speech API) — Chrome/Edge only, no server round-trip. */
 export function useVoiceInput(onResult: (text: string) => void) {
-  const [supported, setSupported] = useState(false);
+  const supported = useSyncExternalStore(
+    subscribeToNothing,
+    getSupportedSnapshot,
+    getServerSnapshot
+  );
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-
-  useEffect(() => {
-    setSupported(getSpeechRecognitionConstructor() !== null);
-  }, []);
 
   const stop = useCallback(() => {
     recognitionRef.current?.stop();
