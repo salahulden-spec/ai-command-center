@@ -311,7 +311,16 @@ export default function MindViewPage() {
   );
 
   const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>, nodeId?: string) => {
-    (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+    // Capture on the <svg>, not on the pressed node: a drag has to keep
+    // receiving moves after the pointer leaves the small circle it started on.
+    // Wrapped because setPointerCapture throws NotFoundError for a pointer id
+    // the browser doesn't consider active — and an exception here would abort
+    // the handler before any state was recorded, silently killing the gesture.
+    try {
+      svgRef.current?.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is an enhancement; the gesture still works without it.
+    }
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (pointers.current.size === 2) {
@@ -485,7 +494,14 @@ export default function MindViewPage() {
             Create a project or a task and it&apos;ll appear here, wired up to everything it
             touches.
           </p>
-          <Button render={<Link href="/projects">Go to Projects</Link>} size="sm" className="mt-2" />
+          {/* nativeButton={false}: this renders an <a>, not a <button>, and Base UI
+              warns unless told the underlying element isn't a native button. */}
+          <Button
+            render={<Link href="/projects">Go to Projects</Link>}
+            nativeButton={false}
+            size="sm"
+            className="mt-2"
+          />
         </div>
       ) : (
         <>
@@ -673,7 +689,12 @@ export default function MindViewPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {selectedNode.type !== "unfiled" && (
-                    <Button size="sm" variant="outline" render={<Link href={selectedNode.href}>Open</Link>} />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      nativeButton={false}
+                      render={<Link href={selectedNode.href}>Open</Link>}
+                    />
                   )}
                   <button
                     onClick={() => setSelectedId(null)}
