@@ -4,7 +4,7 @@ import { adminDb, AdminFieldValue, AdminTimestamp } from "@/lib/firebase/admin";
 import { zonedTimeToUtc } from "./timezone";
 import type { AiMode, PendingActionType } from "@/types";
 
-const TIMEZONE = process.env.WHATSAPP_TIMEZONE || "UTC";
+const TIMEZONE = process.env.ASSISTANT_TIMEZONE || "UTC";
 
 // Duplicated from lib/firestore/memory.ts rather than imported: that module
 // pulls in the client Firebase SDK, which server-only code has no reason to
@@ -24,11 +24,17 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 /**
  * Mirrors the mutating side of app/api/chat/route.ts + the client execute-mode
- * branch in chat/page.tsx, but as real server-side `execute` functions — a
- * WhatsApp message has no browser open to run the client-side tool-call
- * pattern the in-app chat depends on. Scoped to what a text message actually
- * needs (projects, tasks, reminders, people, memory) — saveDecision/
- * saveResearch/saveDocument/createWorkflow stay app-only for now.
+ * branch in chat/page.tsx, but as real server-side `execute` functions.
+ *
+ * Shared by every text-message front door (WhatsApp, Telegram, ...): none of
+ * them have a browser open to run the client-side tool-call pattern the
+ * in-app chat depends on, and a message is a message regardless of which app
+ * it arrived on — the webhook route for each platform only needs to verify
+ * the sender and hand the text off to `runAssistantCommand` below.
+ *
+ * Scoped to what a text command actually needs (projects, tasks, reminders,
+ * people, memory) — saveDecision/saveResearch/saveDocument/createWorkflow
+ * stay app-only for now.
  */
 async function currentAiMode(): Promise<AiMode> {
   const snap = await adminDb().collection("users").limit(1).get();
@@ -296,7 +302,7 @@ function buildTools(aiMode: AiMode) {
 function buildSystemPrompt(): string {
   const now = new Date();
   const local = now.toLocaleString("en-US", { timeZone: TIMEZONE, dateStyle: "full", timeStyle: "short" });
-  return `You are the assistant behind AI Command Center, texting with its owner over WhatsApp — the only person who can reach you here.
+  return `You are the assistant behind AI Command Center, texting with its owner — the only person who can reach you here.
 The current date and time is ${local} (zone: ${TIMEZONE}). Use this as the reference point for any relative date/time ("tomorrow", "next Friday") — never guess a different year.
 When creating a reminder, output dueAt as a plain local ISO 8601 date-time with no timezone suffix (e.g. "2026-08-01T09:00:00") — it will be interpreted in the zone above.
 You can create projects, tasks, reminders, and contacts, and mark tasks/reminders done. The list* tools and searchMemory are read-only and always run immediately — use list* to resolve real IDs before referencing anything by name.
@@ -305,8 +311,8 @@ Long-term memory: use searchMemory only when explicitly asked to recall somethin
 Reply like a text message: short, plain, no markdown formatting (this isn't a chat UI that renders it) — a sentence or two confirming what happened.`;
 }
 
-/** Runs one WhatsApp message through the assistant and returns the reply text. */
-export async function runWhatsAppCommand(message: string): Promise<string> {
+/** Runs one inbound text command through the assistant and returns the reply text. */
+export async function runAssistantCommand(message: string): Promise<string> {
   const aiMode = await currentAiMode();
 
   const { text } = await generateText({

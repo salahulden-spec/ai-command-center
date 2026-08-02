@@ -3,7 +3,7 @@
 // avoids depending on that, since this signature check is a security boundary.
 import twilioPkg from "twilio";
 const { validateRequest } = twilioPkg;
-import { runWhatsAppCommand } from "@/lib/whatsapp/orchestrator";
+import { runAssistantCommand } from "@/lib/assistant/orchestrator";
 
 function twiml(message: string): Response {
   const escaped = message
@@ -56,7 +56,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const reply = await runWhatsAppCommand(body);
+    const reply = await runAssistantCommand(body);
     return twiml(reply);
   } catch (err) {
     console.error("WhatsApp command failed:", err);
