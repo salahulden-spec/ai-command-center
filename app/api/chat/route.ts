@@ -1,6 +1,10 @@
 import { streamText, convertToModelMessages, tool, type UIMessage } from "ai";
 import { z } from "zod";
 import { verifyOwnerIdToken } from "@/lib/firebase/verify-id-token";
+import { loadWorkspaceSnapshot } from "@/lib/assistant/context";
+import { CAPTURE_POLICY } from "@/lib/assistant/capture-policy";
+
+const TIMEZONE = process.env.ASSISTANT_TIMEZONE || "UTC";
 
 const tools = {
   createProject: tool({
@@ -30,11 +34,58 @@ const tools = {
     }),
   }),
   createPerson: tool({
-    description: "Save a person to the user's contacts when they mention someone worth tracking (a name plus any company/context).",
+    description:
+      "Save someone to the user's contacts the first time they come up. Only for people not already in the workspace snapshot — if they are already there, use updatePerson instead.",
     inputSchema: z.object({
-      name: z.string().describe("The person's name"),
+      name: z.string().describe("The person's name, or their role if that's all that was given"),
       company: z.string().default("").describe("Their company/affiliation, if mentioned"),
-      notes: z.string().default("").describe("Any other context about them worth remembering"),
+      notes: z
+        .string()
+        .default("")
+        .describe("A short standalone description of who they are and how they relate to the user's work"),
+    }),
+  }),
+  updatePerson: tool({
+    description:
+      "Enrich a contact who already exists: append to their notes, set their company, or rename them. Use this every time an existing person is mentioned again with new detail — it is how the picture of someone deepens over time. Renaming is how a contact first recorded by role ('my boss') becomes their real name later.",
+    inputSchema: z.object({
+      personId: z.string().describe("The contact's Firestore ID, from the workspace snapshot"),
+      personName: z.string().describe("Their current name, for display in the confirmation UI"),
+      appendNote: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe("Only what is genuinely new about them — this is appended, not replacing existing notes"),
+      company: z.string().nullable().default(null),
+      name: z.string().nullable().default(null).describe("A new name, to rename this contact"),
+    }),
+  }),
+  updateTask: tool({
+    description:
+      "Change an existing task's title, status, priority, or due date. Use this when the user reports progress on something already tracked, instead of creating a near-duplicate task. Only pass fields that should change.",
+    inputSchema: z.object({
+      taskId: z.string().describe("The task's Firestore ID, from the workspace snapshot"),
+      projectId: z.string().nullable().describe("Its project ID, or null if standalone"),
+      taskTitle: z.string().describe("Its current title, for display in the confirmation UI"),
+      title: z.string().nullable().default(null),
+      status: z.enum(["todo", "doing", "blocked", "done"]).nullable().default(null),
+      priority: z.enum(["low", "medium", "high"]).nullable().default(null),
+      dueDate: z
+        .string()
+        .nullable()
+        .default(null)
+        .describe("Local ISO 8601 date-time with no timezone suffix"),
+    }),
+  }),
+  updateProject: tool({
+    description:
+      "Change an existing project's status, progress percentage, or description — how a project's progress gets kept up to date as the user talks about it. Only pass fields that should change.",
+    inputSchema: z.object({
+      projectId: z.string().describe("The project's Firestore ID, from the workspace snapshot"),
+      projectName: z.string().describe("Its name, for display in the confirmation UI"),
+      status: z.enum(["active", "blocked", "paused", "done", "archived"]).nullable().default(null),
+      progress: z.number().min(0).max(100).nullable().default(null),
+      description: z.string().nullable().default(null),
     }),
   }),
   listProjects: tool({
@@ -178,14 +229,22 @@ const tools = {
   }),
 };
 
-function buildSystemPrompt() {
+function buildSystemPrompt(snapshot: string) {
   const now = new Date();
   return `You are the assistant inside AI Command Center, the user's private executive assistant app.
 The current date and time is ${now.toISOString()} (${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}). Use this as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "next Friday") — never guess or assume a different year.
 When creating a reminder, output dueAt as a plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), reflecting the user's own wall-clock time, not UTC.
-You can create projects, tasks, reminders, and people (contacts), and mark tasks/reminders complete, using the available tools when the user asks you to.
-The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-only and always run immediately — use them freely to look up real IDs before referencing a project, task, or reminder by name.
-CRITICAL: IDs are opaque random Firestore strings (e.g. "e3QIlmSjbpg46UHWRt0Q") — never construct, guess, or slugify one from a name (e.g. "websiteRedesignId" is never valid). If a task requires an existing project/task/reminder's ID and you have not just seen it in an actual tool result, call the matching list* tool FIRST, wait for its real output, and only then call the mutating tool with the exact id string from that result — do not call the lookup and the action that depends on it in the same step.
+You can create and update projects, tasks, reminders, and people (contacts), and mark tasks/reminders complete.
+
+Here is the user's live workspace right now:
+
+${snapshot}
+
+Those IDs are real — copy them exactly when a tool needs one.
+The list* tools (listProjects, listOpenTasks, listPendingReminders) are read-only and always run immediately. The snapshot above is normally enough; use list* only when you need something it doesn't cover (for example a task beyond the ones listed).
+CRITICAL: IDs are opaque random Firestore strings (e.g. "e3QIlmSjbpg46UHWRt0Q") — never construct, guess, or slugify one from a name (e.g. "websiteRedesignId" is never valid). Use an exact id from the snapshot above or from an actual list* result. If you have neither, call the matching list* tool FIRST, wait for its real output, and only then call the mutating tool — do not call the lookup and the action that depends on it in the same step.
+
+${CAPTURE_POLICY}
 Every create/complete/saveMemory tool call is queued for the user's review before anything is actually applied unless they've enabled auto-execute mode — after calling a mutating tool, briefly confirm what you did in plain language.
 Long-term memory: use searchMemory only when the user is explicitly asking you to recall or reference something from before — never search or inject memory automatically into unrelated requests, and never assume something is true from memory without having actually searched for it in this conversation. Use saveMemory when the user shares something clearly durable (a standing preference, a fixed fact, a decision) — not for routine task/project updates that already live in their own records.
 Strategic decisions: when the user asks something like "how should I approach X" / "what's the best way to do Y" / "should I do A or B", structure your answer as 2-3 named options, each with pros, cons, cost, time, risk, and ROI, followed by a clear recommendation with reasoning and a confidence percentage. If the question is clearly about a specific project, offer to save the analysis with saveDecision (resolve the project id via listProjects first) — don't save silently, mention you're doing it.
@@ -203,9 +262,22 @@ export async function POST(req: Request) {
 
   const { messages }: { messages: UIMessage[] } = await req.json();
 
+  // Read up front rather than leaving the model to discover state through
+  // list* calls: ambient capture can only avoid creating duplicate people and
+  // tasks if it can already see everything that exists, with real IDs.
+  // Falls back to an empty workspace rather than failing the whole request —
+  // a degraded chat that might duplicate is better than no chat at all.
+  let snapshot: string;
+  try {
+    snapshot = await loadWorkspaceSnapshot(TIMEZONE);
+  } catch (err) {
+    console.error("Failed to load workspace snapshot for chat:", err);
+    snapshot = "(workspace could not be loaded — rely on the list* tools instead)";
+  }
+
   const result = streamText({
     model: "anthropic/claude-sonnet-4.6",
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt(snapshot),
     messages: await convertToModelMessages(messages),
     tools,
   });

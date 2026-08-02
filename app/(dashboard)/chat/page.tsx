@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { onSnapshot } from "firebase/firestore";
+import { onSnapshot, Timestamp } from "firebase/firestore";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from "ai";
 import { Button } from "@/components/ui/button";
@@ -22,14 +22,14 @@ import {
   approvePendingAction,
   rejectPendingAction,
 } from "@/lib/firestore/pending-actions";
-import { createProject, listProjectsOnce } from "@/lib/firestore/projects";
-import { createTask, updateTaskStatus, listOpenTasksOnce } from "@/lib/firestore/tasks";
+import { createProject, updateProject, listProjectsOnce } from "@/lib/firestore/projects";
+import { createTask, updateTaskStatus, updateTask, listOpenTasksOnce } from "@/lib/firestore/tasks";
 import {
   createReminder,
   markReminderDone,
   listPendingRemindersOnce,
 } from "@/lib/firestore/reminders";
-import { createPerson } from "@/lib/firestore/people";
+import { createPerson, appendPersonNote, listPeopleOnce } from "@/lib/firestore/people";
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
 import { createDecision } from "@/lib/firestore/decisions";
 import { createResearchEntry } from "@/lib/firestore/research";
@@ -50,6 +50,9 @@ import type {
   DocumentEntities,
   MemoryType,
   PendingActionType,
+  ProjectStatus,
+  TaskPriority,
+  TaskStatus,
   WorkflowStep,
 } from "@/types";
 import { Mic, Paperclip, X as XIcon } from "lucide-react";
@@ -110,10 +113,22 @@ async function validateReference(
       return `No project exists with id "${toolInput.projectId}". Call listProjects and use one of the exact ids it returns — never construct or guess an id.`;
     }
   }
-  if (toolName === "completeTask") {
+  if (toolName === "completeTask" || toolName === "updateTask") {
     const tasks = await listOpenTasksOnce();
     if (!tasks.some((t) => t.id === toolInput.taskId)) {
       return `No open task exists with id "${toolInput.taskId}". Call listOpenTasks and use one of the exact ids it returns.`;
+    }
+  }
+  if (toolName === "updatePerson") {
+    const people = await listPeopleOnce();
+    if (!people.some((p) => p.id === toolInput.personId)) {
+      return `No contact exists with id "${toolInput.personId}". Use an exact id from the workspace snapshot, or call createPerson if they are genuinely new.`;
+    }
+  }
+  if (toolName === "updateProject") {
+    const projects = await listProjectsOnce();
+    if (!projects.some((p) => p.id === toolInput.projectId)) {
+      return `No project exists with id "${toolInput.projectId}". Use an exact id from the workspace snapshot — never construct or guess an id.`;
     }
   }
   if (toolName === "completeReminder") {
@@ -152,6 +167,14 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Remind: "${input.text}"`;
     case "createPerson":
       return `Add contact "${input.name}"`;
+    case "updatePerson":
+      return input.name
+        ? `Rename contact "${input.personName}" to "${input.name}"`
+        : `Update contact "${input.personName}"`;
+    case "updateTask":
+      return `Update task "${input.taskTitle}"`;
+    case "updateProject":
+      return `Update project "${input.projectName}"`;
     case "completeTask":
       return `Mark task "${input.taskTitle}" as done`;
     case "completeReminder":
@@ -411,6 +434,44 @@ function ChatConversation({
                 await createReminder({ text, dueAt: new Date(dueAt) });
               } else if (mutationType === "createPerson") {
                 await createPerson(mutationPayload as { name: string; company: string; notes: string });
+              } else if (mutationType === "updatePerson") {
+                const { personId, appendNote, company, name } = mutationPayload as {
+                  personId: string;
+                  appendNote: string | null;
+                  company: string | null;
+                  name: string | null;
+                };
+                await appendPersonNote(personId, { appendNote, company, name });
+              } else if (mutationType === "updateTask") {
+                const { taskId, projectId, title, status, priority, dueDate } =
+                  mutationPayload as {
+                    taskId: string;
+                    projectId: string | null;
+                    title: string | null;
+                    status: TaskStatus | null;
+                    priority: TaskPriority | null;
+                    dueDate: string | null;
+                  };
+                // Null means "leave alone", so only non-null fields are
+                // forwarded — spreading them all would blank out the rest.
+                await updateTask(projectId, taskId, {
+                  ...(title ? { title } : {}),
+                  ...(status ? { status } : {}),
+                  ...(priority ? { priority } : {}),
+                  ...(dueDate ? { dueDate: Timestamp.fromDate(new Date(dueDate)) } : {}),
+                });
+              } else if (mutationType === "updateProject") {
+                const { projectId, status, progress, description } = mutationPayload as {
+                  projectId: string;
+                  status: ProjectStatus | null;
+                  progress: number | null;
+                  description: string | null;
+                };
+                await updateProject(projectId, {
+                  ...(status ? { status } : {}),
+                  ...(progress !== null ? { progress } : {}),
+                  ...(description ? { description } : {}),
+                });
               } else if (mutationType === "completeTask") {
                 const { taskId, projectId } = mutationPayload as {
                   taskId: string;

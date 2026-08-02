@@ -3,6 +3,7 @@ import { z } from "zod";
 import { adminDb, AdminFieldValue, AdminTimestamp } from "@/lib/firebase/admin";
 import { zonedTimeToUtc } from "./timezone";
 import { loadWorkspaceSnapshot } from "./context";
+import { CAPTURE_POLICY } from "./capture-policy";
 import { loadThread, appendTurns, clearThread, type Turn } from "./thread";
 import type { AiMode, PendingActionType } from "@/types";
 
@@ -289,23 +290,27 @@ function buildTools(aiMode: AiMode) {
 
     updatePerson: tool({
       description:
-        "Add to an existing contact — appends to their notes, and updates their company if given. Use for things like 'note that Kutty prefers email'.",
+        "Enrich an existing contact: append to their notes, set their company, or rename them. Always prefer this over createPerson when the person is already in the workspace snapshot. Renaming is how someone first recorded by role ('my boss') becomes their real name once you learn it.",
       inputSchema: z.object({
         personId: z.string(),
-        personName: z.string().describe("For the confirmation message"),
+        personName: z.string().describe("Their current name, for the confirmation message"),
         appendNote: z.string().nullable().default(null),
         company: z.string().nullable().default(null),
+        name: z.string().nullable().default(null).describe("A new name, to rename this contact"),
       }),
-      execute: async ({ personId, personName, appendNote, company }) => {
-        if (!appendNote && !company) return "Nothing to change — no fields were provided.";
+      execute: async ({ personId, personName, appendNote, company, name }) => {
+        if (!appendNote && !company && !name) {
+          return "Nothing to change — no fields were provided.";
+        }
         return mutate(
           aiMode,
           "updatePerson",
-          `update contact "${personName}"`,
-          { personId, appendNote, company },
+          name ? `rename contact "${personName}" to "${name}"` : `update contact "${personName}"`,
+          { personId, appendNote, company, name },
           async () => {
             const ref = db.collection("people").doc(personId);
             const updates: Record<string, unknown> = {};
+            if (name) updates.name = name;
             if (company) updates.company = company;
             if (appendNote) {
               const existing = ((await ref.get()).data()?.notes as string | undefined) ?? "";
@@ -481,6 +486,8 @@ ${snapshot}
 Those IDs are real — copy them exactly when a tool needs one. Never invent or construct an ID. If something the user mentions isn't listed above, say so rather than guessing which item they meant; ask a short clarifying question when two items could plausibly match.
 
 You can create and update projects, tasks, reminders, and contacts, mark things done, delete a task, capture notes to the inbox, and remember durable facts. Prefer captureNote when the user is just dumping a thought rather than assigning work.
+
+${CAPTURE_POLICY}
 
 Long-term memory: use searchMemory only when explicitly asked to recall something — never assume something is true from memory without having searched for it first. Use saveMemory only for something clearly durable (a standing preference, a fixed fact) — not routine task/project updates.
 

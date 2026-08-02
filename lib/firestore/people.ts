@@ -34,15 +34,20 @@ export async function createPerson(input: { name: string; company: string; notes
 }
 
 /**
- * Appends to a contact's notes rather than replacing them — the assistant's
- * updatePerson is for adding what it just learned, not overwriting history.
+ * Enriches an existing contact. Notes are appended rather than replaced — the
+ * assistant calls this to add what it just learned, and overwriting would
+ * throw away everything known about someone on each new mention.
+ *
+ * `name` exists so a contact first recorded by role ("my boss") can be renamed
+ * once their actual name comes up, instead of becoming a second contact.
  */
 export async function appendPersonNote(
   personId: string,
-  updates: { appendNote?: string | null; company?: string | null }
+  updates: { appendNote?: string | null; company?: string | null; name?: string | null }
 ) {
   const ref = doc(db, "people", personId).withConverter(converter);
   const patch: Record<string, unknown> = {};
+  if (updates.name) patch.name = updates.name;
   if (updates.company) patch.company = updates.company;
   if (updates.appendNote) {
     const existing = (await getDoc(ref)).data()?.notes ?? "";
