@@ -65,6 +65,18 @@ export async function updateTaskStatus(
   });
 }
 
+/** General-purpose task edit. Only the fields present in `updates` are touched. */
+export async function updateTask(
+  projectId: string | null,
+  taskId: string,
+  updates: Partial<Pick<Task, "title" | "status" | "priority" | "dueDate">>
+) {
+  return updateDoc(doc(tasksCollection(projectId), taskId), {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function deleteTask(projectId: string | null, taskId: string) {
   return deleteDoc(doc(tasksCollection(projectId), taskId));
 }

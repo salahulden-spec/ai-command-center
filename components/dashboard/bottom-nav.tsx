@@ -10,8 +10,8 @@ export function BottomNav() {
 
   return (
     <nav
-      className="glow-border fixed inset-x-0 bottom-0 z-40 flex border-t bg-background/95 backdrop-blur-sm md:hidden"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      className="glow-border pb-safe fixed inset-x-0 bottom-0 z-40 flex border-t bg-background/95 backdrop-blur-md md:hidden"
+      aria-label="Primary"
     >
       {MOBILE_NAV.map((link) => {
         const active = isNavActive(pathname, link.href);
@@ -20,13 +20,25 @@ export function BottomNav() {
           <Link
             key={link.href}
             href={link.href}
+            aria-current={active ? "page" : undefined}
             className={cn(
-              "flex flex-1 flex-col items-center gap-1 px-2 py-2.5 text-[0.65rem] transition-colors",
+              // min-h-14 so every target clears the 44px minimum even once the
+              // label wraps — the old py-2.5 left them around 38px.
+              "tap relative flex min-h-14 flex-1 flex-col items-center justify-center gap-1 px-1 text-[0.65rem]",
               active ? "text-primary" : "text-muted-foreground"
             )}
           >
+            {/* A lit bar on the edge the nav is attached to: readable at a
+                glance without relying on the colour shift alone. */}
+            <span
+              aria-hidden
+              className={cn(
+                "absolute inset-x-4 top-0 h-0.5 rounded-full transition-opacity",
+                active ? "glow-border bg-primary opacity-100" : "opacity-0"
+              )}
+            />
             <Icon className={cn("h-5 w-5", active && "glow-text")} />
-            {link.label}
+            <span className="leading-none">{link.label}</span>
           </Link>
         );
       })}

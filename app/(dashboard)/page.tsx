@@ -121,10 +121,15 @@ export default function DashboardPage() {
     <div className="flex flex-col gap-10 pb-6">
       <div className="text-center md:text-left">
         <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">
-          {getGreeting()}
+          {new Date().toLocaleDateString([], {
+            weekday: "long",
+            month: "short",
+            day: "numeric",
+          })}
         </p>
-        <h1 className="mt-2 text-3xl font-semibold">
-          {getGreeting()}, {firstName}
+        <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">
+          {getGreeting()}
+          {firstName && `, ${firstName}`}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">{statusText}</p>
       </div>
@@ -171,14 +176,16 @@ export default function DashboardPage() {
         <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-primary">
           Quick Actions
         </h2>
-        <div className="flex gap-3 overflow-x-auto pb-2">
+        {/* Bleeds to the screen edge on mobile so the row reads as scrollable
+            instead of looking like it just happens to be clipped. */}
+        <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
           {quickActions.map((action) => {
             const Icon = action.icon;
             return (
               <Link
                 key={action.href}
                 href={action.href}
-                className="glow-border flex min-w-[7.5rem] shrink-0 flex-col items-center gap-2 rounded-xl border bg-card/60 px-4 py-4 transition-colors hover:bg-card active:scale-95"
+                className="surface tap flex min-w-[7.5rem] shrink-0 flex-col items-center gap-2 px-4 py-4 hover:bg-card"
               >
                 <Icon className="h-5 w-5 text-primary" />
                 <span className="text-xs">{action.label}</span>

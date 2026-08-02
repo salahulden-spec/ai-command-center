@@ -8,6 +8,19 @@ interface TelegramUpdate {
   };
 }
 
+const HELP_TEXT = `I'm your Command Center. Just talk normally — no commands to memorise.
+
+Things you can say:
+"Add a task to call the supplier tomorrow"
+"Start a project called Warehouse Move"
+"Mark the quotation task done"
+"Remind me Sunday 8am to send the invoice"
+"Bump that to high priority"
+"Save this: Kutty prefers email over calls"
+"What's on today?"
+
+I remember the last few messages, so follow-ups work. Send /reset to start a clean thread.`;
+
 /**
  * Telegram's webhook for the bot. Two gates before anything reaches the AI:
  * the request must carry the secret token chosen when the webhook was
@@ -54,8 +67,18 @@ export async function POST(req: Request) {
     });
   }
 
+  if (/^\/start\b/.test(text)) {
+    return Response.json({
+      method: "sendMessage",
+      chat_id: chatId,
+      text: HELP_TEXT,
+    });
+  }
+
   try {
-    const reply = await runAssistantCommand(text);
+    // Keyed on the chat so the assistant carries recent history and short
+    // follow-ups ("make it high priority") resolve against what came before.
+    const reply = await runAssistantCommand(text, { threadKey: `telegram:${chatId}` });
     return Response.json({ method: "sendMessage", chat_id: chatId, text: reply });
   } catch (err) {
     console.error("Telegram command failed:", err);

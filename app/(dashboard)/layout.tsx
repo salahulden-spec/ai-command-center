@@ -2,8 +2,8 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Bell, MessageCircle, Search, Settings, LogOut } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { MessageCircle, Search, Settings } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -13,6 +13,7 @@ import { CommandPalette } from "@/components/command-palette/command-palette";
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, loading, isAllowed, signOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
@@ -47,53 +48,45 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       <Sidebar user={user} onSignOut={() => void signOut()} onOpenPalette={() => setPaletteOpen(true)} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
 
-      <header
-        className="glow-border sticky top-0 z-30 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur-sm md:hidden"
-        style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
-      >
-        <span className="glow-text font-mono text-sm font-medium tracking-tight">
-          AI Command Center
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setPaletteOpen(true)}
-            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
-            aria-label="Search"
-          >
-            <Search className="h-4 w-4" />
-          </button>
-          <Link
-            href="/reminders"
-            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
-            aria-label="Reminders"
-          >
-            <Bell className="h-4 w-4" />
-          </Link>
-          <Link
-            href="/chat"
-            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
-            aria-label="Chat"
-          >
-            <MessageCircle className="h-4 w-4" />
-          </Link>
-          <Link
-            href="/settings"
-            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
-            aria-label="Settings"
-          >
-            <Settings className="h-4 w-4" />
-          </Link>
-          <button
-            onClick={() => void signOut()}
-            className="rounded-md p-2 text-muted-foreground hover:text-foreground"
-            aria-label="Sign out"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+      {/* Three actions, not five: at 44px each they now clear the minimum
+          touch target, and sign-out lives on the Settings page it links to. */}
+      <header className="glow-border pt-safe sticky top-0 z-30 border-b bg-background/90 backdrop-blur-sm md:hidden">
+        <div className="flex items-center justify-between px-4 py-2">
+          <span className="glow-text font-mono text-sm font-medium tracking-tight">
+            AI Command Center
+          </span>
+          <div className="flex items-center">
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="tap flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground active:bg-accent active:text-foreground"
+              aria-label="Search"
+            >
+              <Search className="h-5 w-5" />
+            </button>
+            <Link
+              href="/chat"
+              className="tap flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground active:bg-accent active:text-foreground"
+              aria-label="Chat"
+            >
+              <MessageCircle className="h-5 w-5" />
+            </Link>
+            <Link
+              href="/settings"
+              className="tap flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground active:bg-accent active:text-foreground"
+              aria-label="Settings"
+            >
+              <Settings className="h-5 w-5" />
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main className="min-h-screen p-6 pb-24 md:ml-60 md:pb-6">{children}</main>
+      {/* Keyed on the route so each navigation replays the entrance animation,
+          which gives the app a sense of response on a slow mobile connection
+          well before the data itself arrives. */}
+      <main key={pathname} className="animate-rise min-h-screen p-4 pb-28 sm:p-6 md:ml-60 md:pb-6">
+        {children}
+      </main>
 
       <BottomNav />
     </div>

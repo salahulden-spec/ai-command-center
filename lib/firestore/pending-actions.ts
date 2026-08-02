@@ -7,19 +7,29 @@ import {
   orderBy,
   query,
   where,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
 import { makeConverter } from "./converter";
 import type { PendingAction, PendingActionType } from "@/types";
-import { createProject } from "./projects";
-import { createTask, updateTaskStatus } from "./tasks";
+import { createProject, updateProject } from "./projects";
+import { createTask, updateTaskStatus, updateTask, deleteTask } from "./tasks";
 import { createReminder, markReminderDone } from "./reminders";
-import { createPerson } from "./people";
+import { createPerson, appendPersonNote } from "./people";
+import { createInboxItem } from "./inbox";
 import { createMemory } from "./memory";
 import { createDecision } from "./decisions";
 import { createResearchEntry } from "./research";
 import { createFiledDocument } from "./documents";
-import type { MemoryType, DecisionOption, DocumentEntities } from "@/types";
+import type {
+  MemoryType,
+  DecisionOption,
+  DocumentEntities,
+  TaskStatus,
+  TaskPriority,
+  ProjectStatus,
+  InboxItemType,
+} from "@/types";
 
 const converter = makeConverter<PendingAction>();
 
@@ -75,6 +85,61 @@ export async function approvePendingAction(action: PendingAction) {
     case "completeReminder": {
       const { reminderId } = action.payload as { reminderId: string };
       await markReminderDone(reminderId);
+      break;
+    }
+    case "updateTask": {
+      const { taskId, projectId, title, status, priority, dueDate } = action.payload as {
+        taskId: string;
+        projectId: string | null;
+        title: string | null;
+        status: TaskStatus | null;
+        priority: TaskPriority | null;
+        dueDate: string | null;
+      };
+      // Null means "leave alone" on the assistant side, so only non-null
+      // fields are forwarded — spreading them all would blank out the rest.
+      await updateTask(projectId, taskId, {
+        ...(title ? { title } : {}),
+        ...(status ? { status } : {}),
+        ...(priority ? { priority } : {}),
+        ...(dueDate ? { dueDate: Timestamp.fromDate(new Date(dueDate)) } : {}),
+      });
+      break;
+    }
+    case "deleteTask": {
+      const { taskId, projectId } = action.payload as {
+        taskId: string;
+        projectId: string | null;
+      };
+      await deleteTask(projectId, taskId);
+      break;
+    }
+    case "updateProject": {
+      const { projectId, status, progress, description } = action.payload as {
+        projectId: string;
+        status: ProjectStatus | null;
+        progress: number | null;
+        description: string | null;
+      };
+      await updateProject(projectId, {
+        ...(status ? { status } : {}),
+        ...(progress !== null ? { progress } : {}),
+        ...(description ? { description } : {}),
+      });
+      break;
+    }
+    case "updatePerson": {
+      const { personId, appendNote, company } = action.payload as {
+        personId: string;
+        appendNote: string | null;
+        company: string | null;
+      };
+      await appendPersonNote(personId, { appendNote, company });
+      break;
+    }
+    case "captureNote": {
+      const { content, type } = action.payload as { content: string; type: InboxItemType };
+      await createInboxItem(content, type);
       break;
     }
     case "saveMemory": {

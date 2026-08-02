@@ -18,13 +18,25 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "AI Command Center",
   description: "Personal AI operating system",
+  applicationName: "AI Command Center",
+  // Tells iOS to launch from the home screen without Safari's chrome, and to
+  // draw the status bar over the app so the background runs edge to edge.
+  appleWebApp: {
+    capable: true,
+    title: "Command",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Required for env(safe-area-inset-*) to report anything but zero.
   viewportFit: "cover",
-  themeColor: "#050710",
+  // Matches --background so the browser/OS chrome blends into the page
+  // instead of showing a seam at the top of the screen.
+  themeColor: "#080e15",
 };
 
 export default function RootLayout({

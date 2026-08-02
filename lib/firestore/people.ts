@@ -3,7 +3,9 @@ import {
   doc,
   addDoc,
   deleteDoc,
+  getDoc,
   getDocs,
+  updateDoc,
   serverTimestamp,
   orderBy,
   query,
@@ -29,6 +31,25 @@ export async function createPerson(input: { name: string; company: string; notes
     notes: input.notes,
     createdAt: serverTimestamp(),
   } as unknown as Person);
+}
+
+/**
+ * Appends to a contact's notes rather than replacing them — the assistant's
+ * updatePerson is for adding what it just learned, not overwriting history.
+ */
+export async function appendPersonNote(
+  personId: string,
+  updates: { appendNote?: string | null; company?: string | null }
+) {
+  const ref = doc(db, "people", personId).withConverter(converter);
+  const patch: Record<string, unknown> = {};
+  if (updates.company) patch.company = updates.company;
+  if (updates.appendNote) {
+    const existing = (await getDoc(ref)).data()?.notes ?? "";
+    patch.notes = existing ? `${existing}\n${updates.appendNote}` : updates.appendNote;
+  }
+  if (!Object.keys(patch).length) return;
+  return updateDoc(doc(db, "people", personId), patch);
 }
 
 export async function deletePerson(personId: string) {

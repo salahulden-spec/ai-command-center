@@ -71,7 +71,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const reply = await runAssistantCommand(text);
+    const reply = await runAssistantCommand(text, { threadKey: `whatsapp:${message.from}` });
     await sendMetaWhatsAppMessage(message.from, reply);
   } catch (err) {
     console.error("WhatsApp command failed:", err);
