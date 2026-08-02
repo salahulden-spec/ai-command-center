@@ -1,65 +1,85 @@
-// twilio is a CommonJS package; a named import only works if the bundler
-// synthesizes one from module.exports. Using the default import instead
-// avoids depending on that, since this signature check is a security boundary.
-import twilioPkg from "twilio";
-const { validateRequest } = twilioPkg;
 import { runAssistantCommand } from "@/lib/assistant/orchestrator";
+import { verifyMetaSignature } from "@/lib/whatsapp/meta-signature";
+import { sendMetaWhatsAppMessage } from "@/lib/whatsapp/meta-send";
 
-function twiml(message: string): Response {
-  const escaped = message
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return new Response(
-    `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escaped}</Message></Response>`,
-    { headers: { "Content-Type": "text/xml" } }
-  );
+interface MetaWebhookPayload {
+  entry?: {
+    changes?: {
+      value?: {
+        messages?: { from: string; type: string; text?: { body: string } }[];
+      };
+    }[];
+  }[];
 }
 
 /**
- * Twilio's "when a message comes in" webhook for the WhatsApp sender.
- *
- * Two independent gates before anything reaches the AI: the request must
- * carry a valid Twilio signature (proves it came from Twilio, not anyone who
- * finds this URL), and the WhatsApp `From` number must exactly match the
- * owner's own number (proves it's *the owner* texting, not another WhatsApp
- * user who's messaged the same Twilio sandbox/sender). Either failing means
- * silent rejection — no hint to a prober about which check failed.
+ * One-time handshake Meta performs whenever the webhook URL is (re)configured
+ * in the App Dashboard: it must see the exact `hub.verify_token` chosen there
+ * echoed back, and the `hub.challenge` value returned verbatim as plain text.
+ */
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const mode = url.searchParams.get("hub.mode");
+  const token = url.searchParams.get("hub.verify_token");
+  const challenge = url.searchParams.get("hub.challenge");
+
+  if (mode === "subscribe" && token === process.env.META_WEBHOOK_VERIFY_TOKEN && challenge) {
+    return new Response(challenge, { status: 200 });
+  }
+  return new Response("Forbidden", { status: 403 });
+}
+
+/**
+ * Meta's webhook for incoming WhatsApp messages. Two independent gates before
+ * anything reaches the AI: the request must carry a valid `X-Hub-Signature-256`
+ * (proves it came from Meta, for this app — not anyone who finds the URL),
+ * and the sender's WhatsApp number must exactly match the owner's own number
+ * (proves it's *the owner* texting, not some other WhatsApp user who's messaged
+ * the same test number). Either failing means silent rejection.
  */
 export async function POST(req: Request) {
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const appSecret = process.env.META_APP_SECRET;
   const ownerNumber = process.env.WHATSAPP_OWNER_NUMBER;
-  if (!authToken || !ownerNumber) {
-    console.error("WhatsApp webhook hit but TWILIO_AUTH_TOKEN/WHATSAPP_OWNER_NUMBER not configured");
+  if (!appSecret || !ownerNumber) {
+    console.error("WhatsApp webhook hit but META_APP_SECRET/WHATSAPP_OWNER_NUMBER not configured");
     return new Response("Not configured", { status: 500 });
   }
 
   const rawBody = await req.text();
-  const params = Object.fromEntries(new URLSearchParams(rawBody));
-
-  const signature = req.headers.get("X-Twilio-Signature") ?? "";
-  const url = req.url;
-  if (!validateRequest(authToken, signature, url, params)) {
+  if (!verifyMetaSignature(appSecret, req.headers.get("X-Hub-Signature-256"), rawBody)) {
     return new Response("Invalid signature", { status: 403 });
   }
 
-  const from = params.From ?? "";
-  if (from !== ownerNumber) {
-    // Not an error — just someone else's message to the same Twilio number
-    // (e.g. a stray sandbox join attempt). Reply with nothing.
-    return new Response(null, { status: 204 });
+  const payload: MetaWebhookPayload = JSON.parse(rawBody);
+  const message = payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+
+  // Meta also posts delivery/read status updates through this same webhook —
+  // those have no `messages` array. Nothing to do but acknowledge them.
+  if (!message) return new Response(null, { status: 200 });
+
+  if (message.from !== ownerNumber) {
+    return new Response(null, { status: 200 });
   }
 
-  const body = (params.Body ?? "").trim();
-  if (!body) {
-    return twiml("Send me a task, project, reminder, or contact to add.");
+  const text = message.type === "text" ? message.text?.body.trim() : undefined;
+  if (!text) {
+    await sendMetaWhatsAppMessage(
+      message.from,
+      "Send me a task, project, reminder, or contact to add — text only for now."
+    );
+    return new Response(null, { status: 200 });
   }
 
   try {
-    const reply = await runAssistantCommand(body);
-    return twiml(reply);
+    const reply = await runAssistantCommand(text);
+    await sendMetaWhatsAppMessage(message.from, reply);
   } catch (err) {
     console.error("WhatsApp command failed:", err);
-    return twiml("Something went wrong on my end — try again in a moment.");
+    await sendMetaWhatsAppMessage(message.from, "Something went wrong on my end — try again in a moment.");
   }
+
+  // Meta expects a fast 200 regardless of how the reply above went — it
+  // retries the whole webhook delivery on non-2xx, which would re-run the
+  // command (and could double-execute a task/reminder creation).
+  return new Response(null, { status: 200 });
 }
