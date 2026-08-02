@@ -78,6 +78,31 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/** Longest caption drawn under a node, in characters. */
+const MAX_LABEL_CHARS = 18;
+/** Width of one character in the mono caption font, at the sizes used below. */
+const LABEL_CHAR_PX = 5.8;
+
+function labelFor(node: MindNode): string {
+  return node.label.length > MAX_LABEL_CHARS
+    ? `${node.label.slice(0, MAX_LABEL_CHARS - 1)}…`
+    : node.label;
+}
+
+/**
+ * How much room a node needs to itself.
+ *
+ * Spacing by circle radius alone is what let captions collide: a 7px dot with
+ * an 18-character caption under it occupies about 100px of width, so nodes the
+ * simulation considered comfortably apart had their labels overlapping into
+ * mush. Half the caption width is the honest figure, damped slightly because
+ * two neighbours rarely both run to full length.
+ */
+function spacingFor(node: MindNode): number {
+  const halfLabel = (labelFor(node).length * LABEL_CHAR_PX) / 2;
+  return Math.max(radiusFor(node) + 26, halfLabel * 0.85 + 12);
+}
+
 /**
  * Runs the force simulation to a settled state and works out a starting camera
  * that frames the whole graph.
@@ -115,9 +140,7 @@ function computeLayout(
         .strength(0.7)
     )
     .force("center", forceCenter(width / 2, height / 2))
-    // Padded well beyond the circle: each node carries a caption underneath, and
-    // without room for it the labels of neighbouring nodes overlap into mush.
-    .force("collide", forceCollide<SimNode>((node) => radiusFor(node) + 30))
+    .force("collide", forceCollide<SimNode>(spacingFor).strength(0.9).iterations(3))
     .force("x", forceX<SimNode>(width / 2).strength(0.035))
     .force("y", forceY<SimNode>(height / 2).strength(0.055))
     .stop();
@@ -139,7 +162,7 @@ function fitTransform(nodes: SimNode[], width: number, height: number): Transfor
     const r = radiusFor(node);
     // Captions sit below and extend past the circle on both sides — measuring
     // only the circles would frame the graph with the labels clipped off.
-    const halfLabel = Math.max(r, 52);
+    const halfLabel = Math.max(r, (labelFor(node).length * LABEL_CHAR_PX) / 2);
     minX = Math.min(minX, (node.x ?? 0) - halfLabel);
     maxX = Math.max(maxX, (node.x ?? 0) + halfLabel);
     minY = Math.min(minY, (node.y ?? 0) - r);
@@ -614,15 +637,18 @@ export default function MindViewPage() {
                               className="pointer-events-none fill-foreground font-mono"
                               style={{
                                 fontSize: node.type === "project" ? 11 : 9.5,
+                                // Painting the stroke first knocks a
+                                // background-coloured halo out from under the
+                                // glyphs, so a caption crossing an edge stays
+                                // readable instead of tangling with it.
                                 paintOrder: "stroke",
                                 stroke: "var(--background)",
-                                strokeWidth: 3,
+                                strokeWidth: 4,
                                 strokeLinejoin: "round",
+                                opacity: dimmed ? 0.35 : 1,
                               }}
                             >
-                              {node.label.length > 22
-                                ? `${node.label.slice(0, 21)}…`
-                                : node.label}
+                              {labelFor(node)}
                             </text>
                           )}
                         </g>

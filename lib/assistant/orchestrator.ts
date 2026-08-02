@@ -85,6 +85,24 @@ function tasksRef(projectId: string | null) {
     : db.collection("tasks");
 }
 
+/**
+ * Throws unless `projectId` names a project that actually exists.
+ *
+ * Firestore will happily create `projects/{anything}/tasks/{id}` even when no
+ * project document `{anything}` exists — a subcollection under a missing
+ * parent is legal and errors nowhere. So a hallucinated id (a project's name,
+ * a slug like "websiteRedesignId", or an example id copied out of the prompt)
+ * writes successfully and the task simply vanishes from every view that walks
+ * down from real projects. This has already happened to this workspace, which
+ * is why the check is here rather than left to the prompt to get right.
+ */
+async function projectRefError(projectId: string | null): Promise<string | null> {
+  if (!projectId) return null;
+  const snap = await adminDb().collection("projects").doc(projectId).get();
+  if (snap.exists) return null;
+  return `No project exists with id "${projectId}". Use an exact id from the workspace snapshot above, or pass null to leave this standalone — never build an id out of a name.`;
+}
+
 function buildTools(aiMode: AiMode) {
   const db = adminDb();
 
@@ -125,8 +143,10 @@ function buildTools(aiMode: AiMode) {
           .default(null)
           .describe('Optional local ISO 8601 date-time with no timezone suffix, e.g. "2026-08-05T17:00:00"'),
       }),
-      execute: async ({ title, projectId, priority, dueDate }) =>
-        mutate(
+      execute: async ({ title, projectId, priority, dueDate }) => {
+        const refError = await projectRefError(projectId);
+        if (refError) return refError;
+        return mutate(
           aiMode,
           "createTask",
           `create task "${title}"`,
@@ -144,7 +164,8 @@ function buildTools(aiMode: AiMode) {
               updatedAt: null,
             });
           }
-        ),
+        );
+      },
     }),
 
     updateTask: tool({

@@ -115,13 +115,20 @@
   --border: oklch(0.83 0.16 200 / 16%);
   --input: oklch(0.83 0.16 200 / 20%);
   --ring: oklch(0.83 0.16 200);
-  --chart-1: oklch(0.83 0.16 200);
-  --chart-2: oklch(0.65 0.18 280);
-  --chart-3: oklch(0.7 0.15 160);
-  --chart-4: oklch(0.75 0.15 60);
-  --chart-5: oklch(0.6 0.2 20);
-  --chart-6: oklch(0.72 0.16 330);
-  --chart-7: oklch(0.8 0.14 110);
+  /* A deliberate cool spectrum — cyan through indigo to magenta — rather than
+     an evenly-spaced rainbow. Every hue sits in the same family as the app's
+     cyan, so the graph reads as one instrument instead of seven unrelated
+     stickers. Reminders are the single warm exception, which is the point:
+     amber against an all-cool field is what makes a deadline catch the eye.
+     Lightness is held high (0.72–0.85) because these are thin glowing strokes
+     on near-black, where anything darker turns muddy. */
+  --chart-1: oklch(0.85 0.17 195); /* projects  — cyan, the anchor */
+  --chart-2: oklch(0.72 0.19 265); /* tasks     — electric indigo */
+  --chart-3: oklch(0.82 0.16 155); /* people    — mint */
+  --chart-4: oklch(0.83 0.16 85); /* reminders — amber, the one warm hue */
+  --chart-5: oklch(0.72 0.14 230); /* documents — steel blue */
+  --chart-6: oklch(0.75 0.2 330); /* research  — magenta */
+  --chart-7: oklch(0.78 0.18 300); /* decisions — violet */
   --sidebar: oklch(0.16 0.025 250);
   --sidebar-foreground: oklch(0.96 0.015 220);
   --sidebar-primary: oklch(0.83 0.16 200);

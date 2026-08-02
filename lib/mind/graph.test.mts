@@ -115,6 +115,69 @@ test("a projectId pointing at a deleted project never yields a dangling edge", (
   }
 });
 
+test("a record whose project no longer exists is dropped, not filed under Unfiled", () => {
+  // This workspace really did accumulate tasks written to projects/{name}/tasks
+  // and projects/{hallucinated-slug}/tasks. Firestore creates subcollections
+  // under missing parents without complaint, so these look fine in the database
+  // and are unreachable from anywhere. Showing them under "Unfiled" dressed a
+  // broken reference up as a deliberate one.
+  const graph = buildMindGraph({ ...empty, tasks: [task("t1", "Ghost", "deleted-project")] });
+
+  assert.equal(graph.nodes.length, 0, "the orphan contributes no node");
+  assert.equal(graph.links.length, 0);
+  assert.ok(!graph.nodes.some((n) => n.id === "unfiled"), "and no hub is invented for it");
+});
+
+test("completed work is left out of the live picture", () => {
+  const done = {
+    id: "t1",
+    title: "Finished",
+    description: "",
+    status: "done",
+    priority: "medium",
+    dueDate: null,
+    projectId: null,
+    source: "manual",
+    createdAt: ts,
+    updatedAt: null,
+  } as never;
+  const graph = buildMindGraph({ ...empty, tasks: [done] });
+  assert.equal(graph.nodes.length, 0, "a done task is history, not part of the graph");
+
+  const doneReminder = {
+    id: "r1",
+    text: "Eat lunch",
+    dueAt: ts,
+    status: "done",
+    relatedProjectId: null,
+    notifiedAt: null,
+    createdAt: ts,
+  } as never;
+  assert.equal(buildMindGraph({ ...empty, reminders: [doneReminder] }).nodes.length, 0);
+});
+
+test("a task naming a contact links them, so People are not isolated dots", () => {
+  const graph = buildMindGraph({
+    ...empty,
+    people: [person("pe1", "Kutty"), person("pe2", "Tareq")],
+    tasks: [task("t1", "Send email to Kutty about the quotation", null)],
+  });
+
+  const mentions = graph.links.filter((l) => l.kind === "mentions");
+  assert.deepEqual(mentions, [{ source: "task-t1", target: "person-pe1", kind: "mentions" }]);
+  assert.equal(graph.nodes.find((n) => n.id === "person-pe2")?.degree, 0);
+});
+
+test("mention matching needs a whole word, not any substring", () => {
+  const graph = buildMindGraph({
+    ...empty,
+    people: [person("pe1", "Ali")],
+    // "quality" contains "ali"; a naive includes() would link them.
+    tasks: [task("t1", "Review the quality report", null)],
+  });
+  assert.equal(graph.links.filter((l) => l.kind === "mentions").length, 0);
+});
+
 test("a document naming a saved contact bridges People into the graph", () => {
   const graph = buildMindGraph({
     ...empty,
