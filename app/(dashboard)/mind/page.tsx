@@ -424,7 +424,7 @@ export default function MindPage() {
                 return (
                   <g
                     key={p.node.id}
-                    className="animate-rise cursor-pointer"
+                    className="animate-fade-in cursor-pointer"
                     style={{
                       transform: `translate(${p.x}px, ${p.y}px)`,
                       transition: "transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease",

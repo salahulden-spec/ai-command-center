@@ -269,6 +269,15 @@
     animation: rise 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
+  /* Entrance for absolutely-positioned/SVG elements: animates opacity ONLY.
+     animate-rise must never be used on elements that carry their own inline
+     transform — its keyframes end at `transform: none` with fill-mode both,
+     which permanently overrides the inline position (this is exactly how the
+     Mind View once collapsed every node onto the centre). */
+  .animate-fade-in {
+    animation: fade-in 250ms ease both;
+  }
+
   /* Horizontal scrollers where a visible bar would only add noise. */
   .no-scrollbar {
     scrollbar-width: none;
@@ -296,6 +305,13 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Opacity only — anything else here would fight inline transforms. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
   }
 }
 
