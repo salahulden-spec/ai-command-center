@@ -1,38 +1,60 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  forceCenter,
-  forceCollide,
-  forceLink,
-  forceManyBody,
-  forceSimulation,
-  forceX,
-  forceY,
-  type SimulationLinkDatum,
-  type SimulationNodeDatum,
-} from "d3-force";
-import { Minus, Plus, Maximize2, X } from "lucide-react";
+import { Minus, Plus, Maximize2, X, ChevronRight } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
-import { useProjectSubcollection } from "@/hooks/use-project-subcollection";
 import { useElementSize } from "@/hooks/use-element-size";
 import { projectsQuery } from "@/lib/firestore/projects";
 import { allTasksQuery } from "@/lib/firestore/tasks";
 import { peopleQuery } from "@/lib/firestore/people";
 import { remindersQuery } from "@/lib/firestore/reminders";
-import { buildMindGraph, type MindNode, type MindNodeType } from "@/lib/mind/graph";
+import { inboxQuery } from "@/lib/firestore/inbox";
+import { linksQuery } from "@/lib/firestore/links";
+import {
+  buildOsTree,
+  layoutRadial,
+  type OsNode,
+  type OsStatus,
+  type PlacedNode,
+} from "@/lib/mind/os-graph";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { Decision, ProjectDocument, ResearchEntry } from "@/types";
 
-type SimNode = MindNode & SimulationNodeDatum;
-interface SimLink extends SimulationLinkDatum<SimNode> {
-  source: SimNode;
-  target: SimNode;
-  kind: "belongsTo" | "mentions";
-}
+/**
+ * Mind View: the workspace as an operating system, not a mind map.
+ *
+ * The owner sits at the centre; categories, records, and a project's own tasks
+ * radiate outward with progressive disclosure — complexity exists only where
+ * it has been asked for. The layout is a deterministic radial tree (see
+ * os-graph.ts), so nothing jiggles, nothing crosses, and every Firestore
+ * change re-derives the picture live through the collection listeners.
+ */
+
+const STATUS_COLOR: Record<OsStatus, string> = {
+  green: "oklch(0.82 0.16 155)",
+  blue: "oklch(0.74 0.16 245)",
+  orange: "oklch(0.83 0.16 85)",
+  red: "oklch(0.68 0.21 25)",
+  gray: "oklch(0.55 0.02 250)",
+  neutral: "oklch(0.8 0.09 200)",
+};
+
+const STATUS_LEGEND: { status: OsStatus; label: string }[] = [
+  { status: "blue", label: "In progress" },
+  { status: "green", label: "Done" },
+  { status: "orange", label: "Waiting" },
+  { status: "red", label: "Urgent" },
+];
+
+const KIND_RADIUS = { owner: 34, hub: 19, project: 15, person: 10, task: 8, reminder: 8 } as const;
+
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 3;
+/** Pointer travel (CSS px) before a press counts as a pan, not a tap. */
+const TAP_THRESHOLD_PX = 6;
 
 interface Transform {
   x: number;
@@ -40,422 +62,229 @@ interface Transform {
   k: number;
 }
 
-const TYPE_META: Record<MindNodeType, { label: string; color: string }> = {
-  project: { label: "Projects", color: "var(--chart-1)" },
-  task: { label: "Tasks", color: "var(--chart-2)" },
-  person: { label: "People", color: "var(--chart-3)" },
-  reminder: { label: "Reminders", color: "var(--chart-4)" },
-  document: { label: "Documents", color: "var(--chart-5)" },
-  research: { label: "Research", color: "var(--chart-6)" },
-  decision: { label: "Decisions", color: "var(--chart-7)" },
-  unfiled: { label: "Unfiled", color: "var(--muted-foreground)" },
-};
-
-const TYPE_ORDER: MindNodeType[] = [
-  "project",
-  "task",
-  "person",
-  "reminder",
-  "document",
-  "research",
-  "decision",
-  "unfiled",
-];
-
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 3.5;
-/** Pointer travel (CSS px) before a press on a node counts as a drag, not a tap. */
-const DRAG_THRESHOLD_PX = 5;
-
-function radiusFor(node: MindNode): number {
-  if (node.type === "project") return 15 + Math.min(node.degree, 12) * 0.9;
-  if (node.type === "unfiled") return 14;
-  if (node.type === "person") return 9;
-  return 7;
+function nodeColor(node: OsNode): string {
+  if (node.kind === "owner") return "var(--primary)";
+  return STATUS_COLOR[node.status];
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+function labelWidth(node: OsNode): number {
+  return Math.max(node.label.length * 6, 40);
 }
 
-/** Longest caption drawn under a node, in characters. */
-const MAX_LABEL_CHARS = 18;
-/** Width of one character in the mono caption font, at the sizes used below. */
-const LABEL_CHAR_PX = 5.8;
-
-function labelFor(node: MindNode): string {
-  return node.label.length > MAX_LABEL_CHARS
-    ? `${node.label.slice(0, MAX_LABEL_CHARS - 1)}…`
-    : node.label;
-}
-
-/**
- * How much room a node needs to itself.
- *
- * Spacing by circle radius alone is what let captions collide: a 7px dot with
- * an 18-character caption under it occupies about 100px of width, so nodes the
- * simulation considered comfortably apart had their labels overlapping into
- * mush. Half the caption width is the honest figure, damped slightly because
- * two neighbours rarely both run to full length.
- */
-function spacingFor(node: MindNode): number {
-  const halfLabel = (labelFor(node).length * LABEL_CHAR_PX) / 2;
-  return Math.max(radiusFor(node) + 26, halfLabel * 0.85 + 12);
-}
-
-/**
- * Runs the force simulation to a settled state and works out a starting camera
- * that frames the whole graph.
- *
- * This is deliberately a pure function called from `useMemo` rather than an
- * effect: the layout is fully determined by the graph plus the canvas size, so
- * deriving it during render keeps it in sync automatically on resize and avoids
- * a render-then-correct flash.
- */
-function computeLayout(
-  nodes: MindNode[],
-  links: { source: string; target: string; kind: "belongsTo" | "mentions" }[],
-  width: number,
-  height: number
-) {
-  const simNodes: SimNode[] = nodes.map((node) => ({ ...node }));
-  const simLinks = links.map((link) => ({ ...link }));
-
-  const simulation = forceSimulation<SimNode>(simNodes)
-    .force(
-      "charge",
-      forceManyBody<SimNode>().strength((node) =>
-        node.type === "project" || node.type === "unfiled" ? -460 : -150
-      )
-    )
-    .force(
-      "link",
-      forceLink<SimNode, SimulationLinkDatum<SimNode>>(
-        simLinks as unknown as SimulationLinkDatum<SimNode>[]
-      )
-        .id((node) => node.id)
-        // "mentions" edges sit looser so cross-links read as bridges between
-        // clusters rather than pulling a person inside a project's cluster.
-        .distance((link) => ((link as SimLink).kind === "mentions" ? 130 : 82))
-        .strength(0.7)
-    )
-    .force("center", forceCenter(width / 2, height / 2))
-    .force("collide", forceCollide<SimNode>(spacingFor).strength(0.9).iterations(3))
-    .force("x", forceX<SimNode>(width / 2).strength(0.035))
-    .force("y", forceY<SimNode>(height / 2).strength(0.055))
-    .stop();
-
-  for (let i = 0; i < 340; i += 1) simulation.tick();
-
-  const initialTransform = fitTransform(simNodes, width, height);
-  return { simulation, simNodes, simLinks: simLinks as unknown as SimLink[], initialTransform };
-}
-
-function fitTransform(nodes: SimNode[], width: number, height: number): Transform {
-  if (nodes.length === 0) return { x: 0, y: 0, k: 1 };
-
+function fitTransform(placed: PlacedNode[], width: number, height: number): Transform {
+  if (!placed.length || !width || !height) return { x: 0, y: 0, k: 1 };
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const node of nodes) {
-    const r = radiusFor(node);
-    // Captions sit below and extend past the circle on both sides — measuring
-    // only the circles would frame the graph with the labels clipped off.
-    const halfLabel = Math.max(r, (labelFor(node).length * LABEL_CHAR_PX) / 2);
-    minX = Math.min(minX, (node.x ?? 0) - halfLabel);
-    maxX = Math.max(maxX, (node.x ?? 0) + halfLabel);
-    minY = Math.min(minY, (node.y ?? 0) - r);
-    maxY = Math.max(maxY, (node.y ?? 0) + r + 18);
+  for (const p of placed) {
+    const half = Math.max(KIND_RADIUS[p.node.kind], labelWidth(p.node) / 2);
+    minX = Math.min(minX, p.x - half);
+    maxX = Math.max(maxX, p.x + half);
+    minY = Math.min(minY, p.y - KIND_RADIUS[p.node.kind] - 8);
+    maxY = Math.max(maxY, p.y + KIND_RADIUS[p.node.kind] + 22);
   }
-
-  const padding = 32;
-  const graphWidth = Math.max(maxX - minX, 1);
-  const graphHeight = Math.max(maxY - minY, 1);
-  // Capped well below MAX_ZOOM so a two-node graph doesn't fill the canvas with
-  // two enormous circles, but high enough that small graphs don't look lost.
-  const k = clamp(
-    Math.min((width - padding) / graphWidth, (height - padding) / graphHeight),
-    MIN_ZOOM,
-    1.15
+  const k = Math.min(
+    MAX_ZOOM,
+    Math.max(MIN_ZOOM, Math.min(width / (maxX - minX + 60), height / (maxY - minY + 60)))
   );
-
   return {
-    k,
     x: width / 2 - ((minX + maxX) / 2) * k,
     y: height / 2 - ((minY + maxY) / 2) * k,
+    k,
   };
 }
 
-export default function MindViewPage() {
-  const { data: projects, loading: loadingProjects } = useCollection(
+/** Gentle curve for cross-relationship arcs, bowed perpendicular to the chord. */
+function arcPath(a: PlacedNode, b: PlacedNode): string {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const mx = (a.x + b.x) / 2 - dy * 0.18;
+  const my = (a.y + b.y) / 2 + dx * 0.18;
+  return `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`;
+}
+
+export default function MindPage() {
+  const { user } = useAuth();
+  const [canvasRef, size] = useElementSize();
+
+  const { data: projects, loading: projectsLoading } = useCollection(
     useMemo(() => projectsQuery(), [])
   );
-  const { data: tasks, loading: loadingTasks } = useCollection(useMemo(() => allTasksQuery(), []));
-  const { data: people, loading: loadingPeople } = useCollection(useMemo(() => peopleQuery(), []));
-  const { data: reminders, loading: loadingReminders } = useCollection(
-    useMemo(() => remindersQuery(), [])
+  const { data: tasks } = useCollection(useMemo(() => allTasksQuery(), []));
+  const { data: people } = useCollection(useMemo(() => peopleQuery(), []));
+  const { data: reminders } = useCollection(useMemo(() => remindersQuery(), []));
+  const { data: inbox } = useCollection(useMemo(() => inboxQuery(), []));
+  const { data: links } = useCollection(useMemo(() => linksQuery(), []));
+
+  const ownerName = user?.displayName?.split(" ")[0] || "Owner";
+
+  const { root, crossEdges } = useMemo(
+    () =>
+      buildOsTree({
+        ownerName,
+        projects,
+        tasks,
+        people,
+        reminders,
+        links,
+        unprocessedInboxCount: inbox.filter((i) => i.status === "unprocessed").length,
+        now: new Date(),
+      }),
+    [ownerName, projects, tasks, people, reminders, links, inbox]
   );
-  const { data: documents } = useProjectSubcollection<ProjectDocument>("documents");
-  const { data: research } = useProjectSubcollection<ResearchEntry>("research");
-  const { data: decisions } = useProjectSubcollection<Decision>("decisions");
 
-  const loading = loadingProjects || loadingTasks || loadingPeople || loadingReminders;
+  // Index and parent chain for the whole tree (not just visible nodes), so the
+  // detail panel can name any relationship and jumping to one can expand the
+  // ancestors that reveal it.
+  const { nodeIndex, parentOf } = useMemo(() => {
+    const nodeIndex = new Map<string, OsNode>();
+    const parentOf = new Map<string, string>();
+    const walk = (node: OsNode, parent: string | null) => {
+      nodeIndex.set(node.id, node);
+      if (parent) parentOf.set(node.id, parent);
+      node.children.forEach((c) => walk(c, node.id));
+    };
+    walk(root, null);
+    return { nodeIndex, parentOf };
+  }, [root]);
 
-  const [containerRef, { width: measuredWidth }] = useElementSize<HTMLDivElement>();
-  const svgRef = useRef<SVGSVGElement>(null);
+  // null = "untouched": hubs start open, and the camera keeps auto-fitting
+  // until the user takes over.
+  const [expandedState, setExpanded] = useState<ReadonlySet<string> | null>(null);
+  const expanded = useMemo(
+    () =>
+      expandedState ??
+      new Set(["owner", ...root.children.filter((c) => c.children.length).map((c) => c.id)]),
+    [expandedState, root]
+  );
 
-  const [hiddenTypes, setHiddenTypes] = useState<Set<MindNodeType>>(new Set());
+  const placed = useMemo(() => layoutRadial(root, expanded), [root, expanded]);
+  const placedById = useMemo(() => new Map(placed.map((p) => [p.node.id, p])), [placed]);
+
+  const [transformState, setTransform] = useState<Transform | null>(null);
+  const transform = transformState ?? fitTransform(placed, size.width, size.height);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = selectedId ? (nodeIndex.get(selectedId) ?? null) : null;
 
-  const width = Math.max(measuredWidth, 280);
-  const height = Math.round(clamp(width * 0.72, 380, 640));
-
-  const graph = useMemo(
+  const visibleArcs = useMemo(
     () =>
-      buildMindGraph({ projects, tasks, people, reminders, documents, research, decisions }),
-    [projects, tasks, people, reminders, documents, research, decisions]
+      crossEdges
+        .map((e) => ({ a: placedById.get(e.a), b: placedById.get(e.b), key: `${e.a}|${e.b}` }))
+        .filter((e): e is { a: PlacedNode; b: PlacedNode; key: string } => !!e.a && !!e.b),
+    [crossEdges, placedById]
   );
 
-  const visible = useMemo(() => {
-    if (hiddenTypes.size === 0) return graph;
-    const nodes = graph.nodes.filter((node) => !hiddenTypes.has(node.type));
-    const keep = new Set(nodes.map((node) => node.id));
-    return {
-      nodes,
-      links: graph.links.filter((link) => keep.has(link.source) && keep.has(link.target)),
-    };
-  }, [graph, hiddenTypes]);
-
-  /**
-   * Identifies "which layout am I looking at". Any change to the graph, the
-   * canvas size, or the filters produces a new key, which automatically
-   * invalidates the user's dragged node positions and camera below — no effect
-   * or manual reset needed.
-   */
-  const layoutKey = useMemo(
-    () =>
-      [
-        visible.nodes.length,
-        visible.links.length,
-        width,
-        height,
-        visible.nodes.map((n) => n.id).join(","),
-      ].join("|"),
-    [visible, width, height]
-  );
-
-  const layout = useMemo(
-    () => computeLayout(visible.nodes, visible.links, width, height),
-    [visible, width, height]
-  );
-
-  const [dragged, setDragged] = useState<{ key: string; nodes: SimNode[] } | null>(null);
-  const [camera, setCamera] = useState<{ key: string; transform: Transform } | null>(null);
-
-  const simNodes = dragged?.key === layoutKey ? dragged.nodes : layout.simNodes;
-  const transform = camera?.key === layoutKey ? camera.transform : layout.initialTransform;
-
-  const nodeById = useMemo(() => new Map(simNodes.map((n) => [n.id, n])), [simNodes]);
-
-  const neighbours = useMemo(() => {
-    if (!selectedId) return null;
-    const ids = new Set<string>();
-    for (const link of layout.simLinks) {
-      if (link.source.id === selectedId) ids.add(link.target.id);
-      else if (link.target.id === selectedId) ids.add(link.source.id);
+  const relatedIds = useMemo(() => {
+    if (!selectedId) return new Set<string>();
+    const set = new Set<string>([selectedId]);
+    for (const e of crossEdges) {
+      if (e.a === selectedId) set.add(e.b);
+      if (e.b === selectedId) set.add(e.a);
     }
-    return ids;
-  }, [layout.simLinks, selectedId]);
+    const p = parentOf.get(selectedId);
+    if (p) set.add(p);
+    nodeIndex.get(selectedId)?.children.forEach((c) => set.add(c.id));
+    return set;
+  }, [selectedId, crossEdges, parentOf, nodeIndex]);
 
-  const selectedNode = selectedId ? nodeById.get(selectedId) ?? null : null;
+  /** Selects a node, expanding every ancestor so it is actually on screen. */
+  const jumpTo = (id: string) => {
+    const next = new Set(expanded);
+    let cursor = parentOf.get(id);
+    while (cursor) {
+      next.add(cursor);
+      cursor = parentOf.get(cursor);
+    }
+    setExpanded(next);
+    setSelectedId(id);
+  };
 
-  const setTransform = useCallback(
-    (next: Transform) => setCamera({ key: layoutKey, transform: next }),
-    [layoutKey]
-  );
+  const toggleNode = (node: OsNode) => {
+    setSelectedId(node.id);
+    if (!node.children.length) return;
+    const next = new Set(expanded);
+    if (next.has(node.id)) next.delete(node.id);
+    else next.add(node.id);
+    setExpanded(next);
+  };
 
-  const zoomBy = useCallback(
-    (factor: number) => {
-      const k = clamp(transform.k * factor, MIN_ZOOM, MAX_ZOOM);
-      // Keep the canvas centre fixed while zooming with the buttons.
-      const cx = width / 2;
-      const cy = height / 2;
-      setTransform({
-        k,
-        x: cx - ((cx - transform.x) / transform.k) * k,
-        y: cy - ((cy - transform.y) / transform.k) * k,
-      });
-    },
-    [transform, width, height, setTransform]
-  );
-
-  // --- Pointer interaction (pan, pinch-zoom, node dragging) --------------------
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const panRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
-  const dragRef = useRef<{
-    id: string;
-    startX: number;
-    startY: number;
+  // --- pan / pinch / zoom -------------------------------------------------
+  const gesture = useRef<{
+    pointers: Map<number, { x: number; y: number; startX: number; startY: number }>;
     moved: boolean;
-  } | null>(null);
-  const pinchRef = useRef<{ distance: number; k: number } | null>(null);
-  const frameRef = useRef<number | null>(null);
+    startDistance: number;
+    startK: number;
+  }>({ pointers: new Map(), moved: false, startDistance: 0, startK: 1 });
 
-  const flushSimulation = useCallback(() => {
-    setDragged({ key: layoutKey, nodes: layout.simNodes.map((node) => ({ ...node })) });
-  }, [layoutKey, layout.simNodes]);
-
-  const runSimulation = useCallback(() => {
-    if (frameRef.current !== null) return;
-    const step = () => {
-      layout.simulation.tick();
-      flushSimulation();
-      if (dragRef.current || layout.simulation.alpha() > 0.03) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        frameRef.current = null;
-      }
-    };
-    frameRef.current = requestAnimationFrame(step);
-  }, [layout.simulation, flushSimulation]);
-
-  const toGraphPoint = useCallback(
-    (clientX: number, clientY: number) => {
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return { x: 0, y: 0 };
-      const scale = width / rect.width;
-      return {
-        x: ((clientX - rect.left) * scale - transform.x) / transform.k,
-        y: ((clientY - rect.top) * scale - transform.y) / transform.k,
-      };
-    },
-    [transform, width]
-  );
-
-  const handlePointerDown = (event: React.PointerEvent<SVGSVGElement>, nodeId?: string) => {
-    // Capture on the <svg>, not on the pressed node: a drag has to keep
-    // receiving moves after the pointer leaves the small circle it started on.
-    // Wrapped because setPointerCapture throws NotFoundError for a pointer id
-    // the browser doesn't consider active — and an exception here would abort
-    // the handler before any state was recorded, silently killing the gesture.
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    const g = gesture.current;
+    g.pointers.set(e.pointerId, {
+      x: e.clientX,
+      y: e.clientY,
+      startX: e.clientX,
+      startY: e.clientY,
+    });
+    if (g.pointers.size === 1) g.moved = false;
+    if (g.pointers.size === 2) {
+      const [p1, p2] = [...g.pointers.values()];
+      g.startDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      g.startK = transform.k;
+    }
     try {
-      svgRef.current?.setPointerCapture(event.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
       // Capture is an enhancement; the gesture still works without it.
     }
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-    if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.values()];
-      pinchRef.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), k: transform.k };
-      panRef.current = null;
-      dragRef.current = null;
-      return;
-    }
-
-    if (nodeId) {
-      // Nothing is pinned yet — a press only becomes a drag once it passes the
-      // threshold in pointermove, so a plain tap stays a tap.
-      dragRef.current = { id: nodeId, startX: event.clientX, startY: event.clientY, moved: false };
-      return;
-    }
-
-    panRef.current = { x: event.clientX, y: event.clientY, tx: transform.x, ty: transform.y };
   };
 
-  const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (!pointers.current.has(event.pointerId)) return;
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const g = gesture.current;
+    const prev = g.pointers.get(e.pointerId);
+    if (!prev) return;
+    const next = { x: e.clientX, y: e.clientY, startX: prev.startX, startY: prev.startY };
+    g.pointers.set(e.pointerId, next);
 
-    if (pointers.current.size === 2 && pinchRef.current) {
-      const [a, b] = [...pointers.current.values()];
-      const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      const k = clamp(
-        (pinchRef.current.k * distance) / Math.max(pinchRef.current.distance, 1),
-        MIN_ZOOM,
-        MAX_ZOOM
-      );
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const scale = width / rect.width;
-      const cx = ((a.x + b.x) / 2 - rect.left) * scale;
-      const cy = ((a.y + b.y) / 2 - rect.top) * scale;
+    // A tap survives finger wobble; only real travel from the press point
+    // turns the gesture into a pan and suppresses the click.
+    if (Math.hypot(next.x - prev.startX, next.y - prev.startY) > TAP_THRESHOLD_PX) {
+      g.moved = true;
+    }
+
+    if (g.pointers.size === 1) {
+      const dx = next.x - prev.x;
+      const dy = next.y - prev.y;
+      if (g.moved && (dx !== 0 || dy !== 0)) {
+        setTransform({ ...transform, x: transform.x + dx, y: transform.y + dy });
+      }
+    } else if (g.pointers.size === 2 && g.startDistance > 0) {
+      const [p1, p2] = [...g.pointers.values()];
+      const distance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, (g.startK * distance) / g.startDistance));
+      const cx = (p1.x + p2.x) / 2;
+      const cy = (p1.y + p2.y) / 2;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const px = cx - rect.left;
+      const py = cy - rect.top;
       setTransform({
         k,
-        x: cx - ((cx - transform.x) / transform.k) * k,
-        y: cy - ((cy - transform.y) / transform.k) * k,
+        x: px - ((px - transform.x) / transform.k) * k,
+        y: py - ((py - transform.y) / transform.k) * k,
       });
-      return;
-    }
-
-    if (dragRef.current) {
-      const drag = dragRef.current;
-      // Pointers jitter by a pixel or two on any real tap (and CDP-driven
-      // clicks emit a move too). Only treat it as a drag past this threshold,
-      // otherwise every tap would be swallowed as a no-op drag.
-      if (!drag.moved) {
-        const travelled = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-        if (travelled < DRAG_THRESHOLD_PX) return;
-        drag.moved = true;
-        layout.simulation.alpha(0.35);
-      }
-      const point = toGraphPoint(event.clientX, event.clientY);
-      const node = layout.simNodes.find((n) => n.id === drag.id);
-      if (node) {
-        node.fx = point.x;
-        node.fy = point.y;
-        layout.simulation.alpha(Math.max(layout.simulation.alpha(), 0.2));
-        runSimulation();
-      }
-      return;
-    }
-
-    if (panRef.current) {
-      const rect = svgRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const scale = width / rect.width;
-      setTransform({
-        k: transform.k,
-        x: panRef.current.tx + (event.clientX - panRef.current.x) * scale,
-        y: panRef.current.ty + (event.clientY - panRef.current.y) * scale,
-      });
+      g.moved = true;
     }
   };
 
-  const handlePointerUp = (event: React.PointerEvent<SVGSVGElement>) => {
-    pointers.current.delete(event.pointerId);
-    if (pointers.current.size < 2) pinchRef.current = null;
-
-    if (dragRef.current) {
-      const drag = dragRef.current;
-      dragRef.current = null;
-
-      if (drag.moved) {
-        // Unpin so the node settles back into the simulation.
-        const node = layout.simNodes.find((n) => n.id === drag.id);
-        if (node) {
-          node.fx = null;
-          node.fy = null;
-        }
-        layout.simulation.alpha(0.15);
-        runSimulation();
-      } else {
-        // A press that never travelled is a tap: select instead of navigating,
-        // so a stray touch can't yank you off the page.
-        setSelectedId((current) => (current === drag.id ? null : drag.id));
-      }
-    }
-    panRef.current = null;
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    gesture.current.pointers.delete(e.pointerId);
   };
 
-  const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
-    const rect = svgRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const scale = width / rect.width;
-    const px = (event.clientX - rect.left) * scale;
-    const py = (event.clientY - rect.top) * scale;
-    const k = clamp(transform.k * (event.deltaY < 0 ? 1.12 : 1 / 1.12), MIN_ZOOM, MAX_ZOOM);
+  const onWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, transform.k * (e.deltaY < 0 ? 1.15 : 0.87)));
     setTransform({
       k,
       x: px - ((px - transform.x) / transform.k) * k,
@@ -463,310 +292,279 @@ export default function MindViewPage() {
     });
   };
 
-  const toggleType = (type: MindNodeType) => {
-    setSelectedId(null);
-    setHiddenTypes((current) => {
-      const next = new Set(current);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
+  const zoomBy = (factor: number) => {
+    const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, transform.k * factor));
+    const cx = size.width / 2;
+    const cy = size.height / 2;
+    setTransform({
+      k,
+      x: cx - ((cx - transform.x) / transform.k) * k,
+      y: cy - ((cy - transform.y) / transform.k) * k,
     });
   };
 
-  const counts = useMemo(() => {
-    const map = new Map<MindNodeType, number>();
-    for (const node of graph.nodes) map.set(node.type, (map.get(node.type) ?? 0) + 1);
-    return map;
-  }, [graph.nodes]);
-
-  const isDimmed = (nodeId: string) =>
-    Boolean(selectedId) && nodeId !== selectedId && !neighbours?.has(nodeId);
-
-  const showLabelFor = (node: SimNode) => {
-    if (selectedId) return node.id === selectedId || Boolean(neighbours?.has(node.id));
-    if (node.type === "project" || node.type === "unfiled") return true;
-    return transform.k >= 0.95 && simNodes.length <= 60;
-  };
-
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-[420px] w-full" />
-      </div>
-    );
-  }
+  const isEmpty = root.children.length === 0;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Mind View</h1>
-        <p className="text-sm text-muted-foreground">
-          Everything you&apos;ve captured, linked by the relationships that actually exist between
-          the records.
-        </p>
-        <p className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
-          {graph.nodes.length} nodes · {graph.links.length} connections
-        </p>
+    <div className="flex h-[calc(100dvh-8.5rem)] flex-col gap-3 md:h-[calc(100dvh-3rem)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">Mind View</h1>
+          <p className="text-xs text-muted-foreground">
+            Your workspace, from the centre out. Tap to expand.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="hidden items-center gap-3 sm:flex">
+            {STATUS_LEGEND.map(({ status, label }) => (
+              <span key={status} className="flex items-center gap-1.5 text-[0.65rem] text-muted-foreground">
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: STATUS_COLOR[status] }}
+                />
+                {label}
+              </span>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" aria-label="Zoom out" onClick={() => zoomBy(0.8)}>
+              <Minus className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Fit view"
+              onClick={() => {
+                setTransform(null);
+                setExpanded(null);
+              }}
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {graph.nodes.length === 0 ? (
-        <div className="glow-border flex flex-col items-center gap-2 rounded-lg border bg-card/30 px-6 py-16 text-center">
-          <p className="text-sm text-muted-foreground">Nothing to map yet.</p>
-          <p className="max-w-sm text-xs text-muted-foreground">
-            Create a project or a task and it&apos;ll appear here, wired up to everything it
-            touches.
-          </p>
-          {/* nativeButton={false}: this renders an <a>, not a <button>, and Base UI
-              warns unless told the underlying element isn't a native button. */}
-          <Button
-            render={<Link href="/projects">Go to Projects</Link>}
-            nativeButton={false}
-            size="sm"
-            className="mt-2"
-          />
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {TYPE_ORDER.filter((type) => (counts.get(type) ?? 0) > 0).map((type) => {
-              const hidden = hiddenTypes.has(type);
-              return (
-                <button
-                  key={type}
-                  onClick={() => toggleType(type)}
-                  aria-pressed={!hidden}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[0.6rem] uppercase tracking-widest transition-colors",
-                    hidden
-                      ? "border-border/60 text-muted-foreground/50"
-                      : "border-border bg-card/60 text-foreground"
-                  )}
-                >
-                  <span
-                    className="inline-block h-2 w-2 shrink-0 rounded-full transition-opacity"
-                    style={{
-                      backgroundColor: TYPE_META[type].color,
-                      opacity: hidden ? 0.3 : 1,
-                    }}
-                  />
-                  {TYPE_META[type].label}
-                  <span className="text-muted-foreground">{counts.get(type)}</span>
-                </button>
-              );
-            })}
+      <div ref={canvasRef} className="surface relative min-h-0 flex-1 overflow-hidden">
+        {projectsLoading ? (
+          <div className="flex h-full flex-col gap-3 p-6">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-full w-full" />
           </div>
-
-          <div ref={containerRef} className="relative w-full">
-            <div className="glow-border bg-grid overflow-hidden rounded-lg border bg-card/30">
-              <svg
-                ref={svgRef}
-                viewBox={`0 0 ${width} ${height}`}
-                className="w-full cursor-grab touch-none select-none active:cursor-grabbing"
-                style={{ height }}
-                role="img"
-                aria-label={`Relationship graph with ${simNodes.length} nodes. Use the list below the graph to open records.`}
-                onPointerDown={(event) => handlePointerDown(event)}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
-                onWheel={handleWheel}
-              >
-                <g transform={`translate(${transform.x},${transform.y}) scale(${transform.k})`}>
-                  <g>
-                    {layout.simLinks.map((link, index) => {
-                      const dim =
-                        Boolean(selectedId) &&
-                        link.source.id !== selectedId &&
-                        link.target.id !== selectedId;
-                      return (
-                        <line
-                          key={index}
-                          x1={link.source.x}
-                          y1={link.source.y}
-                          x2={link.target.x}
-                          y2={link.target.y}
-                          stroke={
-                            link.kind === "mentions" ? "var(--chart-3)" : "var(--muted-foreground)"
-                          }
-                          strokeWidth={link.kind === "mentions" ? 1.4 : 1}
-                          strokeDasharray={link.kind === "mentions" ? "4 3" : undefined}
-                          opacity={dim ? 0.05 : selectedId ? 0.85 : 0.3}
-                        />
-                      );
-                    })}
-                  </g>
-
-                  <g>
-                    {simNodes.map((node) => {
-                      const radius = radiusFor(node);
-                      const dimmed = isDimmed(node.id);
-                      const selected = node.id === selectedId;
-                      const color = TYPE_META[node.type].color;
-                      return (
-                        <g
-                          key={node.id}
-                          transform={`translate(${node.x ?? 0},${node.y ?? 0})`}
-                          opacity={dimmed ? 0.18 : 1}
-                          className="cursor-pointer"
-                          onPointerDown={(event) => {
-                            event.stopPropagation();
-                            handlePointerDown(
-                              event as unknown as React.PointerEvent<SVGSVGElement>,
-                              node.id
-                            );
-                          }}
-                        >
-                          {/* Invisible, finger-sized hit area so small nodes stay tappable. */}
-                          <circle r={Math.max(radius + 10, 18)} fill="transparent" />
-                          <circle
-                            r={radius}
-                            fill="var(--card)"
-                            stroke={color}
-                            strokeWidth={selected ? 3 : 2}
-                            style={{
-                              filter: dimmed
-                                ? undefined
-                                : `drop-shadow(0 0 ${selected ? 10 : 5}px ${color})`,
-                            }}
-                          />
-                          {showLabelFor(node) && (
-                            <text
-                              y={radius + 13}
-                              textAnchor="middle"
-                              className="pointer-events-none fill-foreground font-mono"
-                              style={{
-                                fontSize: node.type === "project" ? 11 : 9.5,
-                                // Painting the stroke first knocks a
-                                // background-coloured halo out from under the
-                                // glyphs, so a caption crossing an edge stays
-                                // readable instead of tangling with it.
-                                paintOrder: "stroke",
-                                stroke: "var(--background)",
-                                strokeWidth: 4,
-                                strokeLinejoin: "round",
-                                opacity: dimmed ? 0.35 : 1,
-                              }}
-                            >
-                              {labelFor(node)}
-                            </text>
-                          )}
-                        </g>
-                      );
-                    })}
-                  </g>
-                </g>
-              </svg>
-
-              <div className="absolute right-3 top-3 flex flex-col gap-1.5">
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8 bg-card/80 backdrop-blur-sm"
-                  onClick={() => zoomBy(1.25)}
-                  aria-label="Zoom in"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8 bg-card/80 backdrop-blur-sm"
-                  onClick={() => zoomBy(1 / 1.25)}
-                  aria-label="Zoom out"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8 bg-card/80 backdrop-blur-sm"
-                  onClick={() => {
-                    setCamera(null);
-                    setDragged(null);
-                    setSelectedId(null);
-                  }}
-                  aria-label="Reset view"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-
-            <p className="mt-2 font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
-              Tap a node to inspect · drag to rearrange · pinch or scroll to zoom
+        ) : isEmpty ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              Nothing to map yet — create a project or text the assistant, and this becomes your
+              operating picture.
             </p>
           </div>
+        ) : (
+          <svg
+            className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onWheel={onWheel}
+            onClick={() => {
+              if (!gesture.current.moved) setSelectedId(null);
+            }}
+            role="application"
+            aria-label="Workspace graph"
+          >
+            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.k})`}>
+              {/* Tree edges */}
+              {placed.map((p) => {
+                if (!p.parentId) return null;
+                const parent = placedById.get(p.parentId);
+                if (!parent) return null;
+                const highlighted =
+                  selectedId !== null && (relatedIds.has(p.node.id) || p.node.id === selectedId);
+                return (
+                  <line
+                    key={`edge-${p.node.id}`}
+                    x1={parent.x}
+                    y1={parent.y}
+                    x2={p.x}
+                    y2={p.y}
+                    stroke={highlighted ? nodeColor(p.node) : "var(--border)"}
+                    strokeWidth={highlighted ? 1.6 : 1}
+                    style={{ transition: "all 320ms ease" }}
+                  />
+                );
+              })}
 
-          {selectedNode && (
-            <div className="glow-border flex flex-col gap-3 rounded-lg border bg-card/60 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="inline-block h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: TYPE_META[selectedNode.type].color }}
-                    />
-                    <span className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
-                      {TYPE_META[selectedNode.type].label.replace(/s$/, "")} · {selectedNode.meta}
-                    </span>
-                  </div>
-                  <p className="truncate text-sm font-medium">{selectedNode.label}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {selectedNode.type !== "unfiled" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      nativeButton={false}
-                      render={<Link href={selectedNode.href}>Open</Link>}
-                    />
-                  )}
-                  <button
-                    onClick={() => setSelectedId(null)}
-                    className="text-muted-foreground hover:text-foreground"
-                    aria-label="Clear selection"
+              {/* Cross-relationship arcs */}
+              {visibleArcs.map(({ a, b, key }) => {
+                const active =
+                  selectedId === a.node.id || selectedId === b.node.id;
+                return (
+                  <path
+                    key={key}
+                    d={arcPath(a, b)}
+                    fill="none"
+                    stroke={STATUS_COLOR.green}
+                    strokeWidth={active ? 1.8 : 1}
+                    strokeDasharray="4 5"
+                    opacity={selectedId ? (active ? 0.9 : 0.1) : 0.35}
+                    style={{ transition: "all 320ms ease" }}
+                  />
+                );
+              })}
+
+              {/* Nodes */}
+              {placed.map((p) => {
+                const r = KIND_RADIUS[p.node.kind];
+                const color = nodeColor(p.node);
+                const dimmed = selectedId !== null && !relatedIds.has(p.node.id);
+                const isSelected = selectedId === p.node.id;
+                return (
+                  <g
+                    key={p.node.id}
+                    className="animate-rise cursor-pointer"
+                    style={{
+                      transform: `translate(${p.x}px, ${p.y}px)`,
+                      transition: "transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease",
+                      opacity: dimmed ? 0.3 : 1,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!gesture.current.moved) toggleNode(p.node);
+                    }}
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <p className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
-                  Connected to ({neighbours?.size ?? 0})
-                </p>
-                {neighbours && neighbours.size > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {[...neighbours].map((id) => {
-                      const node = nodeById.get(id);
-                      if (!node) return null;
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => setSelectedId(id)}
-                          className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 text-xs transition-colors hover:border-primary/60"
+                    {/* Finger-sized invisible hit area */}
+                    <circle r={Math.max(r + 10, 20)} fill="transparent" />
+                    <circle
+                      r={r}
+                      fill="var(--card)"
+                      stroke={color}
+                      strokeWidth={isSelected ? 3 : p.node.kind === "owner" ? 2.5 : 2}
+                      style={{ filter: dimmed ? undefined : `drop-shadow(0 0 ${isSelected ? 10 : 5}px ${color})` }}
+                    />
+                    {p.node.kind === "owner" && (
+                      <text
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        className="pointer-events-none fill-primary font-mono"
+                        style={{ fontSize: 16, fontWeight: 600 }}
+                      >
+                        {p.node.label.slice(0, 1).toUpperCase()}
+                      </text>
+                    )}
+                    {/* Collapsed-children badge */}
+                    {p.node.children.length > 0 && !p.expanded && p.node.kind !== "owner" && (
+                      <g transform={`translate(${r * 0.85}, ${-r * 0.85})`}>
+                        <circle r={7.5} fill="var(--secondary)" stroke="var(--border)" />
+                        <text
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          className="pointer-events-none fill-foreground font-mono"
+                          style={{ fontSize: 8 }}
                         >
-                          <span
-                            className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: TYPE_META[node.type].color }}
-                          />
-                          <span className="truncate">{node.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Nothing links here yet. Attach it to a project, or mention it in a document, to
-                    wire it into the graph.
-                  </p>
-                )}
+                          {p.node.children.length}
+                        </text>
+                      </g>
+                    )}
+                    {/* Alert dot: trouble somewhere beneath this node */}
+                    {p.node.alerts > 0 && !p.expanded && (
+                      <circle
+                        cx={-r * 0.85}
+                        cy={-r * 0.85}
+                        r={3.5}
+                        fill={STATUS_COLOR.red}
+                        style={{ filter: `drop-shadow(0 0 4px ${STATUS_COLOR.red})` }}
+                      />
+                    )}
+                    <text
+                      y={r + 12}
+                      textAnchor="middle"
+                      className="pointer-events-none fill-foreground font-mono"
+                      style={{
+                        fontSize: p.node.kind === "owner" ? 12 : p.node.kind === "hub" ? 10.5 : 9,
+                        paintOrder: "stroke",
+                        stroke: "var(--background)",
+                        strokeWidth: 4,
+                        strokeLinejoin: "round",
+                      }}
+                    >
+                      {p.node.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        )}
+
+        {/* Detail panel */}
+        {selected && (
+          <div className="surface animate-rise absolute inset-x-3 bottom-3 max-h-[45%] overflow-y-auto p-4 md:inset-x-auto md:right-3 md:top-3 md:bottom-auto md:w-72">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{selected.label}</p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: nodeColor(selected) }}
+                  />
+                  {selected.kind} · {selected.sublabel}
+                </p>
               </div>
+              <button
+                onClick={() => setSelectedId(null)}
+                aria-label="Close"
+                className="tap -m-1 rounded-md p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-          )}
-        </>
-      )}
+
+            {relatedIds.size > 1 && (
+              <div className="mt-3 flex flex-col gap-1">
+                <p className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
+                  Connected to
+                </p>
+                {[...relatedIds]
+                  .filter((id) => id !== selectedId && nodeIndex.has(id))
+                  .slice(0, 8)
+                  .map((id) => {
+                    const node = nodeIndex.get(id)!;
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => jumpTo(id)}
+                        className={cn(
+                          "tap flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+                          "hover:bg-accent"
+                        )}
+                      >
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: nodeColor(node) }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{node.label}</span>
+                        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+
+            {selected.href && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 w-full"
+                nativeButton={false}
+                render={<Link href={selected.href}>Open</Link>}
+              />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

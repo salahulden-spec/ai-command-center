@@ -186,6 +186,23 @@ export interface GmailMessage {
   receivedAt: string | null;
 }
 
+/**
+ * A first-class relationship between two records — how a person becomes
+ * *involved in* a task or project rather than merely coexisting with it.
+ * Structural parentage (a task inside its project) is not duplicated here;
+ * links carry only the cross-connections the hierarchy can't express.
+ */
+export type LinkEntityType = "project" | "task" | "reminder" | "person";
+
+export interface EntityLink {
+  id: string;
+  sourceType: LinkEntityType;
+  sourceId: string;
+  targetType: LinkEntityType;
+  targetId: string;
+  createdAt: Timestamp;
+}
+
 export type PendingActionType =
   | "createProject"
   | "createTask"
@@ -198,6 +215,7 @@ export type PendingActionType =
   | "updateProject"
   | "updatePerson"
   | "captureNote"
+  | "linkEntities"
   | "saveMemory"
   | "saveDecision"
   | "saveResearch"

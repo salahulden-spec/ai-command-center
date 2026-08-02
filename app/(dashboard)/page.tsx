@@ -14,7 +14,9 @@ import {
   MessageCircle,
   Calendar,
   Mail,
+  Sparkles,
 } from "lucide-react";
+import { buildSuggestions } from "@/lib/insights/suggestions";
 import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
 import { projectsQuery } from "@/lib/firestore/projects";
@@ -42,6 +44,17 @@ function isToday(date: Date): boolean {
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate()
+  );
+}
+
+function countUrgent(
+  openTasks: { priority: string; dueDate: { toMillis(): number } | null }[],
+  pendingReminders: { dueAt: { toMillis(): number } }[]
+): number {
+  const now = Date.now();
+  return (
+    openTasks.filter((t) => t.priority === "high" || (t.dueDate && t.dueDate.toMillis() < now))
+      .length + pendingReminders.filter((r) => r.dueAt.toMillis() < now).length
   );
 }
 
@@ -74,6 +87,16 @@ export default function DashboardPage() {
     .filter((r) => r.status === "pending")
     .sort((a, b) => a.dueAt.toMillis() - b.dueAt.toMillis());
   const todayReminders = pendingReminders.filter((r) => isToday(r.dueAt.toDate()));
+
+  const doneToday = tasks.filter(
+    (t) => t.status === "done" && t.updatedAt && isToday(t.updatedAt.toDate())
+  );
+  const urgentCount = countUrgent(openTasks, pendingReminders);
+
+  const suggestions = useMemo(
+    () => buildSuggestions({ projects, tasks, reminders, people: [], inbox, now: new Date() }),
+    [projects, tasks, reminders, inbox]
+  );
 
   const totalPending = openTasks.length + pendingReminders.length + unprocessedInbox.length;
   const statusText =
@@ -171,6 +194,59 @@ export default function DashboardPage() {
           </div>
         </form>
       </div>
+
+      {/* Live executive overview: the numbers that describe today at a glance. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { label: "Active projects", value: activeProjects.length, href: "/projects" },
+          { label: "Open tasks", value: openTasks.length, href: "/tasks" },
+          { label: "Done today", value: doneToday.length, href: "/tasks" },
+          { label: "Urgent", value: urgentCount, href: "/briefing", alert: urgentCount > 0 },
+        ].map((stat) => (
+          <Link
+            key={stat.label}
+            href={stat.href}
+            className="surface tap flex flex-col gap-1 px-4 py-3 hover:bg-card"
+          >
+            <span
+              className={cn(
+                "font-mono text-2xl font-semibold",
+                stat.alert ? "text-destructive" : "text-foreground"
+              )}
+            >
+              {stat.value}
+            </span>
+            <span className="text-[0.65rem] uppercase tracking-widest text-muted-foreground">
+              {stat.label}
+            </span>
+          </Link>
+        ))}
+      </div>
+
+      {suggestions.length > 0 && (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-mono text-xs uppercase tracking-[0.2em] text-primary">
+              Suggestions
+            </h2>
+            <Link href="/briefing" className="text-xs text-muted-foreground hover:text-foreground">
+              Full briefing
+            </Link>
+          </div>
+          <div className="flex flex-col gap-2">
+            {suggestions.slice(0, 3).map((s) => (
+              <Link
+                key={s.id}
+                href={s.href}
+                className="surface tap flex items-center gap-3 px-4 py-3 text-sm hover:bg-card"
+              >
+                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1">{s.text}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="mb-3 font-mono text-xs uppercase tracking-[0.2em] text-primary">

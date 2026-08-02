@@ -30,6 +30,7 @@ import {
   listPendingRemindersOnce,
 } from "@/lib/firestore/reminders";
 import { createPerson, appendPersonNote, listPeopleOnce } from "@/lib/firestore/people";
+import { createLink } from "@/lib/firestore/links";
 import { createMemory, listMemoriesOnce, cosineSimilarity } from "@/lib/firestore/memory";
 import { createDecision } from "@/lib/firestore/decisions";
 import { createResearchEntry } from "@/lib/firestore/research";
@@ -119,10 +120,26 @@ async function validateReference(
       return `No open task exists with id "${toolInput.taskId}". Call listOpenTasks and use one of the exact ids it returns.`;
     }
   }
-  if (toolName === "updatePerson") {
+  if (toolName === "updatePerson" || toolName === "linkEntities") {
     const people = await listPeopleOnce();
     if (!people.some((p) => p.id === toolInput.personId)) {
       return `No contact exists with id "${toolInput.personId}". Use an exact id from the workspace snapshot, or call createPerson if they are genuinely new.`;
+    }
+  }
+  if (toolName === "linkEntities" && toolInput.targetType === "project") {
+    const projects = await listProjectsOnce();
+    if (!projects.some((p) => p.id === toolInput.targetId)) {
+      return `No project exists with id "${toolInput.targetId}". Use an exact id from the workspace snapshot.`;
+    }
+  }
+  if (toolName === "createTask" || toolName === "createReminder") {
+    const ids = (toolInput.relatedPersonIds as string[] | undefined) ?? [];
+    if (ids.length) {
+      const people = await listPeopleOnce();
+      const missing = ids.find((id) => !people.some((p) => p.id === id));
+      if (missing) {
+        return `No contact exists with id "${missing}". Use exact ids from the workspace snapshot in relatedPersonIds, or omit them.`;
+      }
     }
   }
   if (toolName === "updateProject") {
@@ -171,6 +188,8 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return input.name
         ? `Rename contact "${input.personName}" to "${input.name}"`
         : `Update contact "${input.personName}"`;
+    case "linkEntities":
+      return `Connect ${input.personName} to "${input.targetLabel}"`;
     case "updateTask":
       return `Update task "${input.taskTitle}"`;
     case "updateProject":
@@ -422,18 +441,51 @@ function ChatConversation({
       }
 
       if (aiMode === "execute") {
+        // Echoed into the tool result so the model can chain within one
+        // message (create Ahmed -> link Ahmed) using real ids, never guesses.
+        let createdId: string | null = null;
         try {
           await withTimeout(
             (async () => {
               if (mutationType === "createProject") {
-                await createProject(mutationPayload as { name: string; description: string });
+                const ref = await createProject(
+                  mutationPayload as { name: string; description: string }
+                );
+                createdId = ref.id;
               } else if (mutationType === "createTask") {
-                await createTask(mutationPayload as { title: string; projectId: string | null });
+                const { relatedPersonIds, ...taskInput } = mutationPayload as {
+                  title: string;
+                  projectId: string | null;
+                  relatedPersonIds?: string[];
+                };
+                const ref = await createTask(taskInput);
+                createdId = ref.id;
+                for (const personId of relatedPersonIds ?? []) {
+                  await createLink("person", personId, "task", ref.id);
+                }
               } else if (mutationType === "createReminder") {
-                const { text, dueAt } = mutationPayload as { text: string; dueAt: string };
-                await createReminder({ text, dueAt: new Date(dueAt) });
+                const { text, dueAt, relatedPersonIds } = mutationPayload as {
+                  text: string;
+                  dueAt: string;
+                  relatedPersonIds?: string[];
+                };
+                const ref = await createReminder({ text, dueAt: new Date(dueAt) });
+                createdId = ref.id;
+                for (const personId of relatedPersonIds ?? []) {
+                  await createLink("person", personId, "reminder", ref.id);
+                }
+              } else if (mutationType === "linkEntities") {
+                const { personId, targetType, targetId } = mutationPayload as {
+                  personId: string;
+                  targetType: "project" | "task" | "reminder";
+                  targetId: string;
+                };
+                await createLink("person", personId, targetType, targetId);
               } else if (mutationType === "createPerson") {
-                await createPerson(mutationPayload as { name: string; company: string; notes: string });
+                const ref = await createPerson(
+                  mutationPayload as { name: string; company: string; notes: string }
+                );
+                createdId = ref.id;
               } else if (mutationType === "updatePerson") {
                 const { personId, appendNote, company, name } = mutationPayload as {
                   personId: string;
@@ -526,7 +578,13 @@ function ChatConversation({
             })(),
             15000
           );
-          addToolResult({ tool: toolName, toolCallId, output: "Done — applied directly." });
+          addToolResult({
+            tool: toolName,
+            toolCallId,
+            output: createdId
+              ? `Done — applied directly. (id: ${createdId})`
+              : "Done — applied directly.",
+          });
         } catch {
           addToolResult({ tool: toolName, toolCallId, output: "Failed to apply." });
         }

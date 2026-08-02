@@ -17,6 +17,7 @@ import { createTask, updateTaskStatus, updateTask, deleteTask } from "./tasks";
 import { createReminder, markReminderDone } from "./reminders";
 import { createPerson, appendPersonNote } from "./people";
 import { createInboxItem } from "./inbox";
+import { createLink } from "./links";
 import { createMemory } from "./memory";
 import { createDecision } from "./decisions";
 import { createResearchEntry } from "./research";
@@ -61,14 +62,37 @@ export async function approvePendingAction(action: PendingAction) {
     case "createProject":
       await createProject(action.payload as { name: string; description: string });
       break;
-    case "createTask":
-      await createTask(
-        action.payload as { title: string; projectId: string | null }
-      );
+    case "createTask": {
+      const { relatedPersonIds, ...taskInput } = action.payload as {
+        title: string;
+        projectId: string | null;
+        relatedPersonIds?: string[];
+      };
+      const ref = await createTask(taskInput);
+      for (const personId of relatedPersonIds ?? []) {
+        await createLink("person", personId, "task", ref.id);
+      }
       break;
+    }
     case "createReminder": {
-      const { text, dueAt } = action.payload as { text: string; dueAt: string };
-      await createReminder({ text, dueAt: new Date(dueAt) });
+      const { text, dueAt, relatedPersonIds } = action.payload as {
+        text: string;
+        dueAt: string;
+        relatedPersonIds?: string[];
+      };
+      const ref = await createReminder({ text, dueAt: new Date(dueAt) });
+      for (const personId of relatedPersonIds ?? []) {
+        await createLink("person", personId, "reminder", ref.id);
+      }
+      break;
+    }
+    case "linkEntities": {
+      const { personId, targetType, targetId } = action.payload as {
+        personId: string;
+        targetType: "project" | "task" | "reminder";
+        targetId: string;
+      };
+      await createLink("person", personId, targetType, targetId);
       break;
     }
     case "createPerson":

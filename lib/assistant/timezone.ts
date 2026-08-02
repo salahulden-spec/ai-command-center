@@ -10,6 +10,18 @@
  * fixed offset would).
  */
 export function zonedTimeToUtc(localIso: string, timeZone: string): Date {
+  // The model is told to omit timezone suffixes, but under pressure it still
+  // sometimes appends one ("2026-08-06T09:00:00+04:00"). An explicit offset is
+  // unambiguous on its own — honour it directly instead of failing the write.
+  const explicit = /(Z|[+-]\d{2}:?\d{2})$/i.exec(localIso);
+  if (explicit) {
+    const parsed = new Date(localIso);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`Not a valid date-time: "${localIso}"`);
+    }
+    return parsed;
+  }
+
   const asUtc = new Date(`${localIso}Z`);
   if (Number.isNaN(asUtc.getTime())) {
     throw new Error(`Not a valid date-time: "${localIso}"`);

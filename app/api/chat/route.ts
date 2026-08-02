@@ -16,7 +16,8 @@ const tools = {
     }),
   }),
   createTask: tool({
-    description: "Create a task, optionally attached to an existing project by its ID.",
+    description:
+      "Create a task, optionally attached to an existing project by its ID and connected to the people involved.",
     inputSchema: z.object({
       title: z.string().describe("What needs to be done"),
       projectId: z
@@ -24,6 +25,10 @@ const tools = {
         .nullable()
         .default(null)
         .describe("The project's Firestore ID if this task belongs to one, otherwise null"),
+      relatedPersonIds: z
+        .array(z.string())
+        .default([])
+        .describe("Ids of contacts involved in this task, from the workspace snapshot"),
     }),
   }),
   createReminder: tool({
@@ -31,6 +36,21 @@ const tools = {
     inputSchema: z.object({
       text: z.string().describe("What to remind the user about"),
       dueAt: z.string().describe("ISO 8601 date-time when the reminder is due"),
+      relatedPersonIds: z
+        .array(z.string())
+        .default([])
+        .describe("Ids of contacts this reminder concerns, from the workspace snapshot"),
+    }),
+  }),
+  linkEntities: tool({
+    description:
+      "Connect an existing contact to an existing project, task, or reminder — recording that they are involved in it. Creates nothing new; use when a message reveals a relationship between things already in the workspace snapshot. Idempotent.",
+    inputSchema: z.object({
+      personId: z.string().describe("The contact's id, from the workspace snapshot"),
+      personName: z.string().describe("For display in the confirmation UI"),
+      targetType: z.enum(["project", "task", "reminder"]),
+      targetId: z.string().describe("The target's id, from the workspace snapshot"),
+      targetLabel: z.string().describe("For display in the confirmation UI"),
     }),
   }),
   createPerson: tool({
