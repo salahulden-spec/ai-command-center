@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CornerDownRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { OsNode, OsStatus } from "@/lib/mind/os-graph";
+import type { Entity, EntityKind } from "@/lib/mind/universe";
 import type {
   Person,
   Project,
@@ -16,22 +16,17 @@ import type {
 } from "@/types";
 
 /**
- * The inspector for a selected node — and the place work actually happens.
+ * The inspector for the selected record — and the place work actually happens.
  *
- * A node on the canvas is a marker: it carries only what the renderer needs.
- * This resolves it back to its Firestore document and lets the owner change
- * that document in place — status, priority, progress, new tasks, who is
- * involved. Nothing here navigates away, because leaving the graph to edit a
- * record is exactly what made the graph feel like a picture of the work rather
- * than the work itself.
+ * A node on the map is a marker: it carries only what the renderer needs. This
+ * resolves it back to its Firestore document and lets the owner change that
+ * document in place — status, priority, progress, new tasks, who is involved.
+ * Nothing here navigates away, because leaving the map to edit a record is what
+ * made the map feel like a picture of the work rather than the work itself.
  *
  * Every handler is fire-and-forget: the page's Firestore listeners are the
- * source of truth, so a successful write re-renders this panel through the
- * same path as a change made on another device.
- *
- * Node ids are `${kind}-${firestoreId}`, split on the FIRST hyphen only — this
- * workspace has held ids containing spaces and hyphens, and a greedy split
- * would silently fail to resolve exactly those records.
+ * source of truth, so a write re-renders this panel through the same path as a
+ * change made on another device.
  */
 
 export interface MindRecords {
@@ -55,18 +50,28 @@ export interface MindActions {
   completeReminder: (reminder: Reminder) => void;
 }
 
-const STATUS_COLOR: Record<OsStatus, string> = {
+/** Semantic colours for controls — separate from the map's per-type hues. */
+const STATUS_COLOR = {
   green: "oklch(0.82 0.16 155)",
   blue: "oklch(0.74 0.16 245)",
   orange: "oklch(0.83 0.16 85)",
   red: "oklch(0.68 0.21 25)",
-  gray: "oklch(0.55 0.02 250)",
   neutral: "oklch(0.8 0.09 200)",
+} as const;
+
+/** Mirrors KIND_STYLE on the map, so a chip matches the node it describes. */
+const KIND_COLOR: Record<EntityKind, string> = {
+  owner: "oklch(0.85 0.17 195)",
+  project: "oklch(0.72 0.19 285)",
+  task: "oklch(0.78 0.14 215)",
+  person: "oklch(0.8 0.15 160)",
+  reminder: "oklch(0.83 0.16 85)",
 };
 
-export function entityIdOf(nodeId: string): string {
-  const i = nodeId.indexOf("-");
-  return i === -1 ? nodeId : nodeId.slice(i + 1);
+/** Entity ids are `kind:recordId`; a record id may itself contain colons. */
+export function recordIdOf(entityId: string): string {
+  const i = entityId.indexOf(":");
+  return i === -1 ? entityId : entityId.slice(i + 1);
 }
 
 function formatDate(ts: { toDate(): Date } | null | undefined): string {
@@ -129,7 +134,7 @@ function Segmented<T extends string>({
             key={option.value}
             onClick={() => !active && onChange(option.value)}
             className={cn(
-              "tap min-h-8 flex-1 rounded-md px-1.5 py-1 text-[0.68rem] capitalize transition-colors",
+              "tap min-h-8 flex-1 rounded-md px-1.5 py-1 text-[0.68rem] transition-colors",
               active ? "text-background" : "text-muted-foreground hover:text-foreground"
             )}
             style={active ? { backgroundColor: option.color ?? "var(--primary)" } : undefined}
@@ -182,7 +187,7 @@ function Row({
   );
 }
 
-/** Assign someone to this record without leaving the graph. */
+/** Assign someone to this record without leaving the map. */
 function AssignPerson({
   people,
   alreadyLinked,
@@ -263,32 +268,31 @@ function AddTask({ onAdd }: { onAdd: (title: string) => void }) {
 }
 
 export function NodeDetail({
-  node,
+  entity,
+  related,
   records,
   actions,
-  relatedIds,
-  nodeIndex,
   onSelect,
   onEnter,
   onClose,
 }: {
-  node: OsNode;
+  entity: Entity;
+  related: Entity[];
   records: MindRecords;
   actions: MindActions;
-  relatedIds: string[];
-  nodeIndex: Map<string, OsNode>;
-  onSelect: (nodeId: string) => void;
+  onSelect: (entityId: string) => void;
   onEnter: () => void;
   onClose: () => void;
 }) {
-  const entityId = entityIdOf(node.id);
-  const color = node.kind === "owner" ? "var(--primary)" : STATUS_COLOR[node.status];
+  const recordId = recordIdOf(entity.id);
+  const color = KIND_COLOR[entity.kind];
 
-  const project = node.kind === "project" ? records.projects.find((p) => p.id === entityId) : null;
-  const task = node.kind === "task" ? records.tasks.find((t) => t.id === entityId) : null;
-  const person = node.kind === "person" ? records.people.find((p) => p.id === entityId) : null;
+  const project =
+    entity.kind === "project" ? records.projects.find((p) => p.id === recordId) : null;
+  const task = entity.kind === "task" ? records.tasks.find((t) => t.id === recordId) : null;
+  const person = entity.kind === "person" ? records.people.find((p) => p.id === recordId) : null;
   const reminder =
-    node.kind === "reminder" ? records.reminders.find((r) => r.id === entityId) : null;
+    entity.kind === "reminder" ? records.reminders.find((r) => r.id === recordId) : null;
 
   const projectTasks = project ? records.tasks.filter((t) => t.projectId === project.id) : [];
   const projectOpen = projectTasks.filter((t) => t.status !== "done");
@@ -296,28 +300,26 @@ export function NodeDetail({
     ? records.projects.find((p) => p.id === task.projectId)
     : null;
 
-  const linkedPeople = new Set(
-    relatedIds.filter((id) => id.startsWith("person-")).map((id) => entityIdOf(id))
-  );
+  const linkedPeople = new Set(related.filter((e) => e.kind === "person").map((e) => e.recordId));
 
   return (
     <div
       className={cn(
-        // Bottom sheet on phones, right rail on desktop — both scroll their
-        // own content so a long task list never pushes the graph off screen.
+        // Bottom sheet on phones, right rail on desktop — both scroll their own
+        // content so a long task list never pushes the map off screen.
         "surface animate-rise absolute z-20 flex flex-col overflow-hidden",
-        "inset-x-2 bottom-2 max-h-[62svh]",
+        "inset-x-2 bottom-2 max-h-[58svh]",
         "md:inset-x-auto md:bottom-auto md:right-3 md:top-3 md:max-h-[calc(100%-1.5rem)] md:w-80"
       )}
       role="dialog"
-      aria-label={`${node.label} details`}
+      aria-label={`${entity.label} details`}
     >
       <div className="flex items-start justify-between gap-2 border-b border-border/60 px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{node.label}</p>
+          <p className="truncate text-sm font-medium">{entity.label}</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-            {node.kind === "ghost" ? "AI suggestion" : node.kind} · {node.sublabel}
+            {entity.kind} · {entity.sublabel}
           </p>
         </div>
         <button
@@ -330,13 +332,7 @@ export function NodeDetail({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
-        {node.detail && (
-          <p className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-            {node.detail}
-          </p>
-        )}
-
-        {/* ---- Task: everything editable in place ---- */}
+        {/* ---- Task ---- */}
         {task && (
           <>
             <div>
@@ -381,7 +377,7 @@ export function NodeDetail({
                 {parentProject ? (
                   <button
                     className="tap text-primary hover:underline"
-                    onClick={() => onSelect(`project-${parentProject.id}`)}
+                    onClick={() => onSelect(`project:${parentProject.id}`)}
                   >
                     {parentProject.name}
                   </button>
@@ -479,9 +475,7 @@ export function NodeDetail({
                     color={taskDotColor(t)}
                     title={t.title}
                     meta={t.status === "done" ? "done" : t.priority}
-                    onClick={
-                      nodeIndex.has(`task-${t.id}`) ? () => onSelect(`task-${t.id}`) : undefined
-                    }
+                    onClick={() => onSelect(`task:${t.id}`)}
                   />
                 ))}
               </div>
@@ -529,63 +523,36 @@ export function NodeDetail({
               <Field label="When">{relativeDays(reminder.dueAt)}</Field>
             </div>
             {reminder.status === "pending" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => actions.completeReminder(reminder)}
-              >
+              <Button variant="outline" size="sm" onClick={() => actions.completeReminder(reminder)}>
                 Mark done
               </Button>
             )}
           </>
         )}
 
-        {/* ---- Hubs, clusters, the owner: what's inside ---- */}
-        {(node.kind === "hub" || node.kind === "cluster" || node.kind === "owner") &&
-          node.children.length > 0 && (
-            <div>
-              <Label>Contains ({node.children.length})</Label>
-              <div className="mt-1 flex flex-col">
-                {node.children.map((c) => (
-                  <Row
-                    key={c.id}
-                    color={c.kind === "owner" ? "var(--primary)" : STATUS_COLOR[c.status]}
-                    title={c.label}
-                    meta={c.alerts > 0 ? `${c.alerts} urgent` : c.sublabel}
-                    onClick={() => onSelect(c.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-        {/* ---- Relationships ---- */}
-        {relatedIds.length > 0 && (
+        {/* ---- Everything this connects to ---- */}
+        {related.length > 0 && (
           <div>
-            <Label>Connected to</Label>
+            <Label>Connected ({related.length})</Label>
             <div className="mt-1 flex flex-col">
-              {relatedIds.map((id) => {
-                const other = nodeIndex.get(id);
-                if (!other) return null;
-                return (
-                  <Row
-                    key={id}
-                    color={other.kind === "owner" ? "var(--primary)" : STATUS_COLOR[other.status]}
-                    title={other.label}
-                    meta={other.kind}
-                    onClick={() => onSelect(id)}
-                  />
-                );
-              })}
+              {related.map((other) => (
+                <Row
+                  key={other.id}
+                  color={other.urgent ? STATUS_COLOR.red : KIND_COLOR[other.kind]}
+                  title={other.label}
+                  meta={other.kind}
+                  onClick={() => onSelect(other.id)}
+                />
+              ))}
             </div>
           </div>
         )}
       </div>
 
-      {(node.children.length > 0 || relatedIds.length > 0) && (
+      {related.length > 0 && (
         <div className="border-t border-border/60 px-4 py-3">
           <Button variant="outline" size="sm" className="w-full" onClick={onEnter}>
-            Enter {node.label}
+            Centre on {entity.label}
           </Button>
         </div>
       )}
