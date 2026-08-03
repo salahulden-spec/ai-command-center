@@ -2,9 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildOsTree,
+  clusterChildren,
+  heatOf,
   layoutRadial,
   textMentionsPerson,
+  CLUSTER_THRESHOLD,
   type OsGraphInput,
+  type OsNode,
 } from "./os-graph.ts";
 
 const NOW = new Date("2026-08-02T12:00:00Z");
@@ -94,12 +98,79 @@ test("explicit links and name inference both produce cross-edges, deduplicated",
     ],
   });
   assert.equal(crossEdges.length, 1, "the explicit link and the inferred mention collapse into one edge");
-  assert.deepEqual(crossEdges[0], { a: "person-pe1", b: "task-t1" });
+  assert.deepEqual(crossEdges[0], { a: "person-pe1", b: "task-t1", recent: true });
 });
 
 test("mention inference needs a whole word", () => {
   assert.ok(textMentionsPerson("Call Ahmed today", "Ahmed"));
   assert.ok(!textMentionsPerson("Review the quality report", "Ali"));
+});
+
+test("oversized sibling rows fold into a cluster, keeping the most urgent visible", () => {
+  const kids: OsNode[] = Array.from({ length: CLUSTER_THRESHOLD + 8 }, (_, i) => ({
+    id: `task-${i}`,
+    kind: "task",
+    label: `Task ${i}`,
+    sublabel: "todo",
+    status: i === 15 ? "red" : "neutral",
+    href: null,
+    children: [],
+    alerts: 0,
+    heat: i / 20,
+  }));
+
+  const out = clusterChildren(kids, "hub-tasks");
+  assert.equal(out.length, 9, "8 kept + 1 cluster");
+  const cluster = out.find((c) => c.kind === "cluster");
+  assert.ok(cluster, "a cluster node exists");
+  assert.equal(cluster!.children.length, 10, "the rest live inside it");
+  assert.ok(
+    out.some((c) => c.id === "task-15"),
+    "the red task is never folded away"
+  );
+  assert.match(cluster!.label, /\+10 more/);
+
+  const small = clusterChildren(kids.slice(0, 5), "hub-tasks");
+  assert.equal(small.length, 5, "small rows are left alone");
+});
+
+test("heat decays from 1 (just now) to 0 (two weeks silent)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const at = (offset: number) => ({ toMillis: () => NOW.getTime() + offset });
+  assert.equal(heatOf(at(0), NOW), 1);
+  assert.ok(heatOf(at(-7 * DAY), NOW) > 0.4 && heatOf(at(-7 * DAY), NOW) < 0.6);
+  assert.equal(heatOf(at(-20 * DAY), NOW), 0);
+  assert.equal(heatOf(null, NOW), 0);
+});
+
+test("AI predictions become ghost children of their project, outside any cluster", () => {
+  const { root } = buildOsTree({
+    ...base,
+    projects: [project("p1", "Vendor Passport")],
+    predictions: [
+      { projectId: "p1", label: "Define next step", reason: "No open tasks.", href: "/projects/p1" },
+    ],
+  });
+  const projectNode = root.children[0].children[0];
+  const ghost = projectNode.children.find((c) => c.kind === "ghost");
+  assert.ok(ghost, "ghost exists under the project");
+  assert.equal(ghost!.detail, "No open tasks.");
+  assert.equal(ghost!.sublabel, "AI suggestion");
+});
+
+test("explicit recent links pulse; inferred mentions do not", () => {
+  const { crossEdges } = buildOsTree({
+    ...base,
+    people: [person("pe1", "Ahmed"), person("pe2", "Mujeeb")],
+    tasks: [task("t1", "Call Mujeeb", null)],
+    links: [
+      { id: "l1", sourceType: "person", sourceId: "pe1", targetType: "task", targetId: "t1", createdAt: ts(-60_000) } as never,
+    ],
+  });
+  const explicit = crossEdges.find((e) => e.a.includes("pe1") || e.b.includes("pe1"));
+  const inferred = crossEdges.find((e) => e.a.includes("pe2") || e.b.includes("pe2"));
+  assert.equal(explicit?.recent, true, "a link created a minute ago is recent");
+  assert.equal(inferred?.recent, false, "name inference carries no recency");
 });
 
 test("layout only descends into expanded nodes and never overlaps siblings", () => {

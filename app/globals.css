@@ -315,6 +315,36 @@
   }
 }
 
+/* Mind View liveness. All of these animate ONLY properties that never carry
+   the node's position (scale/opacity on un-positioned child elements,
+   stroke-dashoffset on paths) — see the animate-rise incident above. */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+.pulse-ring {
+  animation: pulse-ring 2.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.arc-recent {
+  animation: dash-flow 1.4s linear infinite;
+}
+
 @keyframes rise {
   from {
     opacity: 0;
