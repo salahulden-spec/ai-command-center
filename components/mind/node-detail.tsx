@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CornerDownRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { Advice } from "@/lib/mind/advice";
 import type { Entity, EntityKind } from "@/lib/mind/universe";
 import type {
   Person,
@@ -267,12 +268,57 @@ function AddTask({ onAdd }: { onAdd: (title: string) => void }) {
   );
 }
 
+/**
+ * What the workspace has noticed about this record.
+ *
+ * The bar is signal strength — how loudly the observation is shouting relative
+ * to the others — not a model's confidence. Every line is arithmetic over data
+ * already on screen (see lib/mind/advice.ts), so it is checkable.
+ */
+function Observations({ advice, onGo }: { advice: Advice[]; onGo: (entityId: string) => void }) {
+  if (!advice.length) return null;
+  return (
+    <div>
+      <Label>What stands out</Label>
+      <div className="mt-1.5 flex flex-col gap-1.5">
+        {advice.map((item) => (
+          <div key={item.id} className="rounded-lg border border-border/50 bg-secondary/30 p-2.5">
+            <p className="text-xs leading-relaxed">{item.text}</p>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="h-[3px] w-14 overflow-hidden rounded-full bg-secondary">
+                <span
+                  className="block h-full rounded-full bg-primary"
+                  style={{ width: `${Math.round(item.weight * 100)}%` }}
+                />
+              </span>
+              <span className="font-mono text-[0.55rem] uppercase tracking-widest text-muted-foreground">
+                signal
+              </span>
+              {item.go && (
+                <button
+                  onClick={() => onGo(item.go!)}
+                  className="tap ml-auto rounded-md px-1.5 py-0.5 font-mono text-[0.55rem] uppercase tracking-widest text-primary hover:bg-accent"
+                >
+                  Go there
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function NodeDetail({
   entity,
   related,
   records,
   actions,
+  advice,
+  gravity,
   onSelect,
+  onGo,
   onEnter,
   onClose,
 }: {
@@ -280,7 +326,11 @@ export function NodeDetail({
   related: Entity[];
   records: MindRecords;
   actions: MindActions;
+  advice: Advice[];
+  /** 0..1 — how hard this record is pulling at the centre of the map. */
+  gravity: number;
   onSelect: (entityId: string) => void;
+  onGo: (entityId: string) => void;
   onEnter: () => void;
   onClose: () => void;
 }) {
@@ -303,24 +353,27 @@ export function NodeDetail({
   const linkedPeople = new Set(related.filter((e) => e.kind === "person").map((e) => e.recordId));
 
   return (
+    // The page owns where this sits — docked beside the map on desktop, a sheet
+    // over it on phones. This only has to fill whatever it is given and scroll
+    // its own content, so a long task list never pushes the map off screen.
     <div
-      className={cn(
-        // Bottom sheet on phones, right rail on desktop — both scroll their own
-        // content so a long task list never pushes the map off screen.
-        "surface animate-rise absolute z-20 flex flex-col overflow-hidden",
-        "inset-x-2 bottom-2 max-h-[58svh]",
-        "md:inset-x-auto md:bottom-auto md:right-3 md:top-3 md:max-h-[calc(100%-1.5rem)] md:w-80"
-      )}
+      className="flex h-full max-h-full min-h-0 flex-col overflow-hidden"
       role="dialog"
       aria-label={`${entity.label} details`}
     >
-      <div className="flex items-start justify-between gap-2 border-b border-border/60 px-4 py-3">
+      <div
+        className="flex items-start justify-between gap-2 border-b border-border/60 px-4 py-3"
+        style={{
+          backgroundImage: `linear-gradient(180deg, color-mix(in oklch, ${color} 10%, transparent), transparent)`,
+        }}
+      >
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{entity.label}</p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <p className="flex items-center gap-1.5 font-mono text-[0.6rem] uppercase tracking-widest">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-            {entity.kind} · {entity.sublabel}
+            <span style={{ color }}>{entity.kind}</span>
           </p>
+          <p className="mt-1 truncate text-base font-medium tracking-tight">{entity.label}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">{entity.sublabel}</p>
         </div>
         <button
           onClick={onClose}
@@ -332,6 +385,23 @@ export function NodeDetail({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+        {/* How hard this is pulling, and how much hangs off it. */}
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
+            Gravity
+          </span>
+          <span className="h-1 flex-1 overflow-hidden rounded-full bg-secondary">
+            <span
+              className="block h-full rounded-full"
+              style={{ width: `${Math.round(gravity * 100)}%`, backgroundColor: color }}
+            />
+          </span>
+          <span className="font-mono text-[0.6rem] tabular-nums text-muted-foreground">
+            {gravity.toFixed(2)} · {related.length} linked
+          </span>
+        </div>
+
+        <Observations advice={advice} onGo={onGo} />
         {/* ---- Task ---- */}
         {task && (
           <>
