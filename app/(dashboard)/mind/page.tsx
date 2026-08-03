@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { ChevronRight, Crosshair, Flame, Minus, Plus, Maximize2, X } from "lucide-react";
+import { ChevronRight, Flame, Minus, Plus, Maximize2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useCollection } from "@/hooks/use-collection";
 import { useElementSize } from "@/hooks/use-element-size";
@@ -22,6 +21,7 @@ import {
   type Prediction,
 } from "@/lib/mind/os-graph";
 import { Button } from "@/components/ui/button";
+import { NodeDetail } from "@/components/mind/node-detail";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -313,6 +313,41 @@ export default function MindPage() {
   }, [focusId, size.width, size.height]);
 
   useEffect(() => stopCamera, []);
+
+  /**
+   * Only the cross-link relationships, for the inspector's "Connected to".
+   * `relatedIds` above also carries parent and children — those are structure
+   * the panel already shows under "Contains", and repeating them there would
+   * read as noise rather than as relationships.
+   */
+  const crossRelatedIds = useMemo(() => {
+    if (!selectedId) return [];
+    const ids: string[] = [];
+    for (const e of crossEdges) {
+      if (e.a === selectedId && nodeIndex.has(e.b)) ids.push(e.b);
+      else if (e.b === selectedId && nodeIndex.has(e.a)) ids.push(e.a);
+    }
+    return ids;
+  }, [selectedId, crossEdges, nodeIndex]);
+
+  /**
+   * Follow a reference from the inspector. Reveals the target by expanding its
+   * ancestors and selects it, but only moves the camera when it isn't already
+   * on screen — flying on every click would make reading a task list feel like
+   * being dragged around.
+   */
+  const goTo = (id: string) => {
+    const alreadyVisible = placedById.has(id);
+    const next = new Set(expanded);
+    let cursor = parentOf.get(id);
+    while (cursor) {
+      next.add(cursor);
+      cursor = parentOf.get(cursor);
+    }
+    setExpanded(next);
+    setSelectedId(id);
+    if (!alreadyVisible) setFocusId(parentOf.get(id) ?? id);
+  };
 
   /** Dive: focus a node, expand the path to it, and glide the camera there. */
   const dive = (id: string) => {
@@ -736,87 +771,16 @@ export default function MindPage() {
           </svg>
         )}
 
-        {/* Detail panel */}
         {selected && (
-          <div className="surface animate-rise absolute inset-x-3 bottom-3 max-h-[45%] overflow-y-auto p-4 md:inset-x-auto md:right-3 md:top-3 md:bottom-auto md:w-72">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{selected.label}</p>
-                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: nodeColor(selected) }}
-                  />
-                  {selected.kind === "ghost" ? "AI suggestion" : selected.kind} ·{" "}
-                  {selected.sublabel}
-                </p>
-              </div>
-              <button
-                onClick={() => setSelectedId(null)}
-                aria-label="Close"
-                className="tap -m-1 rounded-md p-1 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {selected.detail && (
-              <p className="mt-2 rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-                {selected.detail}
-              </p>
-            )}
-
-            {relatedIds.size > 1 && (
-              <div className="mt-3 flex flex-col gap-1">
-                <p className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
-                  Connected to
-                </p>
-                {[...relatedIds]
-                  .filter((id) => id !== selectedId && nodeIndex.has(id))
-                  .slice(0, 8)
-                  .map((id) => {
-                    const node = nodeIndex.get(id)!;
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => dive(id)}
-                        className="tap flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
-                      >
-                        <span
-                          className="h-1.5 w-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: nodeColor(node) }}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{node.label}</span>
-                        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
-
-            <div className="mt-3 flex gap-2">
-              {selected.children.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => dive(selected.id)}
-                >
-                  <Crosshair className="mr-1.5 h-3.5 w-3.5" />
-                  Focus
-                </Button>
-              )}
-              {selected.href && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  nativeButton={false}
-                  render={<Link href={selected.href}>Open</Link>}
-                />
-              )}
-            </div>
-          </div>
+          <NodeDetail
+            node={selected}
+            records={{ projects, tasks, people, reminders }}
+            relatedIds={crossRelatedIds}
+            nodeIndex={nodeIndex}
+            onSelect={goTo}
+            onFocus={() => dive(selected.id)}
+            onClose={() => setSelectedId(null)}
+          />
         )}
       </div>
     </div>
