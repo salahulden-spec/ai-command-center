@@ -1,25 +1,37 @@
 "use client";
 
-import Link from "next/link";
-import { Crosshair, ExternalLink, X } from "lucide-react";
+import { useState } from "react";
+import { CornerDownRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { OsNode, OsStatus } from "@/lib/mind/os-graph";
-import type { Person, Project, Reminder, Task } from "@/types";
+import type {
+  Person,
+  Project,
+  ProjectStatus,
+  Reminder,
+  Task,
+  TaskPriority,
+  TaskStatus,
+} from "@/types";
 
 /**
- * The inspector for a selected node.
+ * The inspector for a selected node — and the place work actually happens.
  *
- * A node in the graph is a marker, not the record — it carries only what the
- * canvas needs to draw. Everything worth reading lives in the Firestore
- * documents the page already has in memory, so this resolves the node back to
- * its record by id and renders the real thing: a project's description,
- * progress, and full task list; a task's priority, deadline and parent; a
- * contact's notes and everything they touch.
+ * A node on the canvas is a marker: it carries only what the renderer needs.
+ * This resolves it back to its Firestore document and lets the owner change
+ * that document in place — status, priority, progress, new tasks, who is
+ * involved. Nothing here navigates away, because leaving the graph to edit a
+ * record is exactly what made the graph feel like a picture of the work rather
+ * than the work itself.
  *
- * Node ids are `${kind}-${firestoreId}`. Split on the FIRST hyphen only —
- * this workspace has historically contained ids with spaces and hyphens in
- * them, and splitting greedily would silently fail to resolve those records.
+ * Every handler is fire-and-forget: the page's Firestore listeners are the
+ * source of truth, so a successful write re-renders this panel through the
+ * same path as a change made on another device.
+ *
+ * Node ids are `${kind}-${firestoreId}`, split on the FIRST hyphen only — this
+ * workspace has held ids containing spaces and hyphens, and a greedy split
+ * would silently fail to resolve exactly those records.
  */
 
 export interface MindRecords {
@@ -27,6 +39,20 @@ export interface MindRecords {
   tasks: Task[];
   people: Person[];
   reminders: Reminder[];
+}
+
+export interface MindActions {
+  setTaskStatus: (task: Task, status: TaskStatus) => void;
+  setTaskPriority: (task: Task, priority: TaskPriority) => void;
+  setProjectStatus: (project: Project, status: ProjectStatus) => void;
+  setProjectProgress: (project: Project, progress: number) => void;
+  addTask: (projectId: string | null, title: string) => void;
+  assignPerson: (
+    targetType: "project" | "task" | "reminder",
+    targetId: string,
+    personId: string
+  ) => void;
+  completeReminder: (reminder: Reminder) => void;
 }
 
 const STATUS_COLOR: Record<OsStatus, string> = {
@@ -62,6 +88,60 @@ function relativeDays(ts: { toMillis(): number } | null | undefined): string {
   return `in ${Math.abs(days)}d`;
 }
 
+/** Module scope, not the render body: reading the clock during render is impure. */
+function isOverdue(ts: { toMillis(): number } | null | undefined): boolean {
+  return !!ts && ts.toMillis() < Date.now();
+}
+
+function taskDotColor(task: Task): string {
+  if (task.status === "done") return STATUS_COLOR.green;
+  if (task.dueDate && task.dueDate.toMillis() < Date.now()) return STATUS_COLOR.red;
+  if (task.priority === "high") return STATUS_COLOR.red;
+  if (task.status === "blocked") return STATUS_COLOR.orange;
+  if (task.status === "doing") return STATUS_COLOR.blue;
+  return STATUS_COLOR.neutral;
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
+      {children}
+    </p>
+  );
+}
+
+/** The panel's core control: pick one of a short set, applied immediately. */
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string; color?: string }[];
+  onChange: (next: T) => void;
+}) {
+  return (
+    <div className="flex gap-1 rounded-lg bg-secondary/50 p-0.5">
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            onClick={() => !active && onChange(option.value)}
+            className={cn(
+              "tap min-h-8 flex-1 rounded-md px-1.5 py-1 text-[0.68rem] capitalize transition-colors",
+              active ? "text-background" : "text-muted-foreground hover:text-foreground"
+            )}
+            style={active ? { backgroundColor: option.color ?? "var(--primary)" } : undefined}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -73,15 +153,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mt-4 font-mono text-[0.6rem] uppercase tracking-widest text-muted-foreground">
-      {children}
-    </p>
-  );
-}
-
-/** One tappable line for a related record — the panel's navigation primitive. */
 function Row({
   color,
   title,
@@ -98,7 +169,7 @@ function Row({
       onClick={onClick}
       disabled={!onClick}
       className={cn(
-        "tap flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+        "tap flex min-h-8 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
         onClick && "hover:bg-accent"
       )}
     >
@@ -111,35 +182,103 @@ function Row({
   );
 }
 
-/** Module scope, not the render body: reading the clock during render is impure. */
-function isOverdue(ts: { toMillis(): number } | null | undefined): boolean {
-  return !!ts && ts.toMillis() < Date.now();
+/** Assign someone to this record without leaving the graph. */
+function AssignPerson({
+  people,
+  alreadyLinked,
+  onAssign,
+}: {
+  people: Person[];
+  alreadyLinked: Set<string>;
+  onAssign: (personId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const available = people.filter((p) => !alreadyLinked.has(p.id));
+  if (!available.length) return null;
+
+  return (
+    <div className="mt-2">
+      {open ? (
+        <div className="flex max-h-40 flex-col overflow-y-auto rounded-md border border-border/60">
+          {available.map((person) => (
+            <button
+              key={person.id}
+              onClick={() => {
+                onAssign(person.id);
+                setOpen(false);
+              }}
+              className="tap flex min-h-8 items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent"
+            >
+              <CornerDownRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{person.name}</span>
+              {person.company && (
+                <span className="shrink-0 text-[0.6rem] text-muted-foreground">
+                  {person.company}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <button
+          onClick={() => setOpen(true)}
+          className="tap flex min-h-8 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-primary hover:bg-accent"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Assign someone
+        </button>
+      )}
+    </div>
+  );
 }
 
-function taskDotColor(task: Task): string {
-  if (task.status === "done") return STATUS_COLOR.green;
-  if (task.dueDate && task.dueDate.toMillis() < Date.now()) return STATUS_COLOR.red;
-  if (task.priority === "high") return STATUS_COLOR.red;
-  if (task.status === "blocked") return STATUS_COLOR.orange;
-  if (task.status === "doing") return STATUS_COLOR.blue;
-  return STATUS_COLOR.neutral;
+/** Create a task straight into the project you're looking at. */
+function AddTask({ onAdd }: { onAdd: (title: string) => void }) {
+  const [title, setTitle] = useState("");
+  const submit = () => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    onAdd(trimmed);
+    setTitle("");
+  };
+  return (
+    <div className="mt-2 flex gap-1.5">
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && submit()}
+        placeholder="Add a task…"
+        className="min-h-8 min-w-0 flex-1 rounded-md border border-border/60 bg-transparent px-2 py-1 text-xs outline-none placeholder:text-muted-foreground focus-visible:border-primary"
+      />
+      <button
+        onClick={submit}
+        disabled={!title.trim()}
+        aria-label="Add task"
+        className="tap flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground disabled:opacity-40"
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 export function NodeDetail({
   node,
   records,
+  actions,
   relatedIds,
   nodeIndex,
   onSelect,
-  onFocus,
+  onEnter,
   onClose,
 }: {
   node: OsNode;
   records: MindRecords;
+  actions: MindActions;
   relatedIds: string[];
   nodeIndex: Map<string, OsNode>;
   onSelect: (nodeId: string) => void;
-  onFocus: () => void;
+  onEnter: () => void;
   onClose: () => void;
 }) {
   const entityId = entityIdOf(node.id);
@@ -157,6 +296,10 @@ export function NodeDetail({
     ? records.projects.find((p) => p.id === task.projectId)
     : null;
 
+  const linkedPeople = new Set(
+    relatedIds.filter((id) => id.startsWith("person-")).map((id) => entityIdOf(id))
+  );
+
   return (
     <div
       className={cn(
@@ -173,10 +316,7 @@ export function NodeDetail({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{node.label}</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: color }}
-            />
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
             {node.kind === "ghost" ? "AI suggestion" : node.kind} · {node.sublabel}
           </p>
         </div>
@@ -189,90 +329,48 @@ export function NodeDetail({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
         {node.detail && (
           <p className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
             {node.detail}
           </p>
         )}
 
-        {/* ---- Project ---- */}
-        {project && (
-          <>
-            {project.description && (
-              <p className="text-xs leading-relaxed text-muted-foreground">{project.description}</p>
-            )}
-            <div className="mt-2 divide-y divide-border/40">
-              <Field label="Status">{project.status}</Field>
-              <Field label="Progress">
-                <span className="flex items-center justify-end gap-2">
-                  <span className="h-1 w-16 overflow-hidden rounded-full bg-secondary">
-                    <span
-                      className="block h-full rounded-full"
-                      style={{
-                        width: `${Math.min(100, Math.max(0, project.progress ?? 0))}%`,
-                        backgroundColor: color,
-                      }}
-                    />
-                  </span>
-                  <span className="font-mono tabular-nums">{project.progress ?? 0}%</span>
-                </span>
-              </Field>
-              <Field label="Tasks">
-                <span className="font-mono tabular-nums">
-                  {projectOpen.length} open · {projectTasks.length - projectOpen.length} done
-                </span>
-              </Field>
-              <Field label="Updated">{relativeDays(project.updatedAt)}</Field>
-            </div>
-
-            {project.objectives?.length > 0 && (
-              <>
-                <SectionLabel>Objectives</SectionLabel>
-                <ul className="mt-1 flex flex-col gap-1">
-                  {project.objectives.map((o, i) => (
-                    <li key={i} className="text-xs text-muted-foreground">
-                      • {o}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {projectTasks.length > 0 && (
-              <>
-                <SectionLabel>Tasks</SectionLabel>
-                <div className="mt-1 flex flex-col">
-                  {projectTasks.map((t) => (
-                    <Row
-                      key={t.id}
-                      color={taskDotColor(t)}
-                      title={t.title}
-                      meta={t.status === "done" ? "done" : t.priority}
-                      onClick={
-                        nodeIndex.has(`task-${t.id}`) ? () => onSelect(`task-${t.id}`) : undefined
-                      }
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {/* ---- Task ---- */}
+        {/* ---- Task: everything editable in place ---- */}
         {task && (
           <>
-            {task.description && (
-              <p className="text-xs leading-relaxed text-muted-foreground">{task.description}</p>
-            )}
-            <div className="mt-2 divide-y divide-border/40">
-              <Field label="Status">{task.status}</Field>
-              <Field label="Priority">
-                <span className={cn(task.priority === "high" && "text-destructive")}>
-                  {task.priority}
-                </span>
-              </Field>
+            <div>
+              <Label>Status</Label>
+              <div className="mt-1.5">
+                <Segmented<TaskStatus>
+                  value={task.status}
+                  onChange={(next) => actions.setTaskStatus(task, next)}
+                  options={[
+                    { value: "todo", label: "To do" },
+                    { value: "doing", label: "Doing", color: STATUS_COLOR.blue },
+                    { value: "blocked", label: "Blocked", color: STATUS_COLOR.orange },
+                    { value: "done", label: "Done", color: STATUS_COLOR.green },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label>Priority</Label>
+              <div className="mt-1.5">
+                <Segmented<TaskPriority>
+                  value={task.priority}
+                  onChange={(next) => actions.setTaskPriority(task, next)}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Medium" },
+                    { value: "high", label: "High", color: STATUS_COLOR.red },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div className="divide-y divide-border/40">
               <Field label="Due">
                 <span className={cn(isOverdue(task.dueDate) && "text-destructive")}>
                   {task.dueDate ? formatDate(task.dueDate) : "no deadline"}
@@ -296,6 +394,108 @@ export function NodeDetail({
                 {task.source === "ai" && " · by assistant"}
               </Field>
             </div>
+
+            <div>
+              <Label>People on this</Label>
+              <AssignPerson
+                people={records.people}
+                alreadyLinked={linkedPeople}
+                onAssign={(personId) => actions.assignPerson("task", task.id, personId)}
+              />
+            </div>
+          </>
+        )}
+
+        {/* ---- Project ---- */}
+        {project && (
+          <>
+            {project.description && (
+              <p className="text-xs leading-relaxed text-muted-foreground">{project.description}</p>
+            )}
+
+            <div>
+              <Label>Status</Label>
+              <div className="mt-1.5">
+                <Segmented<ProjectStatus>
+                  value={project.status}
+                  onChange={(next) => actions.setProjectStatus(project, next)}
+                  options={[
+                    { value: "active", label: "Active", color: STATUS_COLOR.blue },
+                    { value: "blocked", label: "Blocked", color: STATUS_COLOR.orange },
+                    { value: "paused", label: "Paused", color: STATUS_COLOR.orange },
+                    { value: "done", label: "Done", color: STATUS_COLOR.green },
+                  ]}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <Label>Progress</Label>
+                <span className="font-mono text-xs tabular-nums">{project.progress ?? 0}%</span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                  <span
+                    className="block h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, project.progress ?? 0))}%`,
+                      backgroundColor: color,
+                    }}
+                  />
+                </span>
+                <button
+                  onClick={() =>
+                    actions.setProjectProgress(project, Math.max(0, (project.progress ?? 0) - 10))
+                  }
+                  aria-label="Decrease progress"
+                  className="tap flex h-8 w-8 items-center justify-center rounded-md border border-border/60 text-muted-foreground hover:text-foreground"
+                >
+                  −
+                </button>
+                <button
+                  onClick={() =>
+                    actions.setProjectProgress(project, Math.min(100, (project.progress ?? 0) + 10))
+                  }
+                  aria-label="Increase progress"
+                  className="tap flex h-8 w-8 items-center justify-center rounded-md border border-border/60 text-muted-foreground hover:text-foreground"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <Label>Tasks</Label>
+                <span className="font-mono text-[0.6rem] text-muted-foreground">
+                  {projectOpen.length} open · {projectTasks.length - projectOpen.length} done
+                </span>
+              </div>
+              <div className="mt-1 flex flex-col">
+                {projectTasks.map((t) => (
+                  <Row
+                    key={t.id}
+                    color={taskDotColor(t)}
+                    title={t.title}
+                    meta={t.status === "done" ? "done" : t.priority}
+                    onClick={
+                      nodeIndex.has(`task-${t.id}`) ? () => onSelect(`task-${t.id}`) : undefined
+                    }
+                  />
+                ))}
+              </div>
+              <AddTask onAdd={(title) => actions.addTask(project.id, title)} />
+            </div>
+
+            <div>
+              <Label>People on this</Label>
+              <AssignPerson
+                people={records.people}
+                alreadyLinked={linkedPeople}
+                onAssign={(personId) => actions.assignPerson("project", project.id, personId)}
+              />
+            </div>
           </>
         )}
 
@@ -307,34 +507,44 @@ export function NodeDetail({
               <Field label="Known since">{relativeDays(person.createdAt)}</Field>
             </div>
             {person.notes && (
-              <>
-                <SectionLabel>What you know</SectionLabel>
+              <div>
+                <Label>What you know</Label>
                 <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
                   {person.notes}
                 </p>
-              </>
+              </div>
             )}
           </>
         )}
 
         {/* ---- Reminder ---- */}
         {reminder && (
-          <div className="divide-y divide-border/40">
-            <Field label="Due">
-              <span className={cn(isOverdue(reminder.dueAt) && "text-destructive")}>
-                {formatDate(reminder.dueAt)}
-              </span>
-            </Field>
-            <Field label="When">{relativeDays(reminder.dueAt)}</Field>
-            <Field label="Status">{reminder.status}</Field>
-          </div>
+          <>
+            <div className="divide-y divide-border/40">
+              <Field label="Due">
+                <span className={cn(isOverdue(reminder.dueAt) && "text-destructive")}>
+                  {formatDate(reminder.dueAt)}
+                </span>
+              </Field>
+              <Field label="When">{relativeDays(reminder.dueAt)}</Field>
+            </div>
+            {reminder.status === "pending" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => actions.completeReminder(reminder)}
+              >
+                Mark done
+              </Button>
+            )}
+          </>
         )}
 
-        {/* ---- Hubs and clusters: what's inside ---- */}
+        {/* ---- Hubs, clusters, the owner: what's inside ---- */}
         {(node.kind === "hub" || node.kind === "cluster" || node.kind === "owner") &&
           node.children.length > 0 && (
-            <>
-              <SectionLabel>Contains ({node.children.length})</SectionLabel>
+            <div>
+              <Label>Contains ({node.children.length})</Label>
               <div className="mt-1 flex flex-col">
                 {node.children.map((c) => (
                   <Row
@@ -346,13 +556,13 @@ export function NodeDetail({
                   />
                 ))}
               </div>
-            </>
+            </div>
           )}
 
         {/* ---- Relationships ---- */}
         {relatedIds.length > 0 && (
-          <>
-            <SectionLabel>Connected to</SectionLabel>
+          <div>
+            <Label>Connected to</Label>
             <div className="mt-1 flex flex-col">
               {relatedIds.map((id) => {
                 const other = nodeIndex.get(id);
@@ -368,32 +578,17 @@ export function NodeDetail({
                 );
               })}
             </div>
-          </>
+          </div>
         )}
       </div>
 
-      <div className="flex gap-2 border-t border-border/60 px-4 py-3">
-        {node.children.length > 0 && (
-          <Button variant="outline" size="sm" className="flex-1" onClick={onFocus}>
-            <Crosshair className="mr-1.5 h-3.5 w-3.5" />
-            Focus
+      {(node.children.length > 0 || relatedIds.length > 0) && (
+        <div className="border-t border-border/60 px-4 py-3">
+          <Button variant="outline" size="sm" className="w-full" onClick={onEnter}>
+            Enter {node.label}
           </Button>
-        )}
-        {node.href && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            nativeButton={false}
-            render={
-              <Link href={node.href}>
-                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                Open
-              </Link>
-            }
-          />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

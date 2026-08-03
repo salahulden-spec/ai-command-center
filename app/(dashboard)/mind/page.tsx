@@ -13,6 +13,7 @@ import { inboxQuery } from "@/lib/firestore/inbox";
 import { linksQuery } from "@/lib/firestore/links";
 import { buildSuggestions } from "@/lib/insights/suggestions";
 import {
+  buildOrbit,
   buildOsTree,
   layoutRadial,
   type OsNode,
@@ -21,7 +22,11 @@ import {
   type Prediction,
 } from "@/lib/mind/os-graph";
 import { Button } from "@/components/ui/button";
-import { NodeDetail } from "@/components/mind/node-detail";
+import { NodeDetail, type MindActions } from "@/components/mind/node-detail";
+import { updateTask, createTask } from "@/lib/firestore/tasks";
+import { updateProject } from "@/lib/firestore/projects";
+import { markReminderDone } from "@/lib/firestore/reminders";
+import { createLink } from "@/lib/firestore/links";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -126,8 +131,10 @@ function fitTransform(
 function arcPath(a: PlacedNode, b: PlacedNode): string {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const mx = (a.x + b.x) / 2 - dy * 0.18;
-  const my = (a.y + b.y) / 2 + dx * 0.18;
+  // Barely bowed. The old 0.18 sent long links swooping right across the
+  // canvas, which is what made the whole thing read as a roller coaster.
+  const mx = (a.x + b.x) / 2 - dy * 0.05;
+  const my = (a.y + b.y) / 2 + dx * 0.05;
   return `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`;
 }
 
@@ -208,21 +215,57 @@ export default function MindPage() {
     [expandedState, root]
   );
 
-  const placed = useMemo(() => layoutRadial(root, expanded), [root, expanded]);
-  const placedById = useMemo(() => new Map(placed.map((p) => [p.node.id, p])), [placed]);
-
-  const [transformState, setTransform] = useState<Transform | null>(null);
-  const transform = transformState ?? fitTransform(placed, size.width, size.height);
-
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = selectedId ? (nodeIndex.get(selectedId) ?? null) : null;
 
   const [focusId, setFocusId] = useState("owner");
   const [heatMode, setHeatMode] = useState(false);
 
+  /**
+   * Entering a node re-roots the whole picture on it (see buildOrbit): its
+   * tasks and everyone connected orbit it directly, so relationships that were
+   * long arcs across the canvas become short spokes. The owner is the only
+   * focus that shows the full tree.
+   */
+  const orbitRoot = useMemo(() => {
+    if (focusId === "owner") return null;
+    const node = nodeIndex.get(focusId);
+    if (!node || (!node.children.length && !crossEdges.some((e) => e.a === focusId || e.b === focusId)))
+      return null;
+    return buildOrbit(node, crossEdges, nodeIndex);
+  }, [focusId, nodeIndex, crossEdges]);
+
+  const activeRoot = orbitRoot ?? root;
+  // An orbit is small and deliberately entered, so it opens fully rather than
+  // making the owner expand each ring again.
+  const activeExpanded = useMemo(() => {
+    if (!orbitRoot) return expanded;
+    const ids = new Set<string>([orbitRoot.id]);
+    orbitRoot.children.forEach((c) => ids.add(c.id));
+    return ids;
+  }, [orbitRoot, expanded]);
+
+  const placed = useMemo(
+    () => layoutRadial(activeRoot, activeExpanded),
+    [activeRoot, activeExpanded]
+  );
+  const placedById = useMemo(() => new Map(placed.map((p) => [p.node.id, p])), [placed]);
+
+  const [transformState, setTransform] = useState<Transform | null>(null);
+  const transform = transformState ?? fitTransform(placed, size.width, size.height);
+
+
   /** Everything inside the focused subtree; the lens fades the rest. */
   const focusSet = useMemo(() => {
     const set = new Set<string>();
+    if (orbitRoot) {
+      const walk = (n: OsNode) => {
+        set.add(n.id);
+        n.children.forEach(walk);
+      };
+      walk(orbitRoot);
+      return set;
+    }
     const start = nodeIndex.get(focusId);
     if (!start) return set;
     const walk = (n: OsNode) => {
@@ -231,7 +274,7 @@ export default function MindPage() {
     };
     walk(start);
     return set;
-  }, [focusId, nodeIndex]);
+  }, [focusId, nodeIndex, orbitRoot]);
 
   const breadcrumbs = useMemo(() => {
     const path: OsNode[] = [];
@@ -332,7 +375,10 @@ export default function MindPage() {
       if (!subset.length) return;
       animateTo(
         transform,
-        fitTransform(subset, size.width, size.height, focusId === "owner" ? MAX_ZOOM : 1.6)
+        // A small orbit (a project with one task) would otherwise hit the cap
+        // and render as two enormous circles; 1.1 keeps entering a node feeling
+        // like arriving somewhere rather than pressing your face against it.
+        fitTransform(subset, size.width, size.height, focusId === "owner" ? MAX_ZOOM : 1.1)
       );
       return;
     }
@@ -391,6 +437,25 @@ export default function MindPage() {
     setSelectedId(id);
     if (!alreadyVisible) setFocusId(parentOf.get(id) ?? id);
   };
+
+  /**
+   * Writes go straight to Firestore and come back through the listeners above,
+   * so the node, the panel and the health strip all update from one source —
+   * no optimistic local copy to drift out of sync.
+   */
+  const actions = useMemo<MindActions>(
+    () => ({
+      setTaskStatus: (task, status) => void updateTask(task.projectId, task.id, { status }),
+      setTaskPriority: (task, priority) => void updateTask(task.projectId, task.id, { priority }),
+      setProjectStatus: (project, status) => void updateProject(project.id, { status }),
+      setProjectProgress: (project, progress) => void updateProject(project.id, { progress }),
+      addTask: (projectId, title) => void createTask({ title, projectId }),
+      assignPerson: (targetType, targetId, personId) =>
+        void createLink("person", personId, targetType, targetId),
+      completeReminder: (reminder) => void markReminderDone(reminder.id),
+    }),
+    []
+  );
 
   /** Dive: focus a node, expand the path to it, and glide the camera there. */
   const dive = (id: string) => {
@@ -674,11 +739,14 @@ export default function MindPage() {
                     key={key}
                     d={arcPath(a, b)}
                     fill="none"
-                    className={recent ? "arc-recent" : undefined}
+                    className={recent && (active || !selectedId) ? "arc-recent" : undefined}
                     stroke={STATUS_COLOR.green}
-                    strokeWidth={active ? 1.8 : recent ? 1.4 : 1}
-                    strokeDasharray="4 5"
-                    opacity={!inFocus ? 0.03 : selectedId ? (active ? 0.9 : 0.1) : recent ? 0.55 : 0.3}
+                    strokeWidth={active ? 1.6 : 1}
+                    strokeDasharray="3 6"
+                    // Quiet unless it concerns what you picked: relationships
+                    // are context, and drawing them all loudly at rest buried
+                    // the structure under its own cross-links.
+                    opacity={!inFocus ? 0.02 : active ? 0.85 : selectedId ? 0.05 : 0.14}
                     style={{ transition: "opacity 320ms ease" }}
                   />
                 );
@@ -761,7 +829,7 @@ export default function MindPage() {
                           dimmed || isGhost
                             ? undefined
                             : `drop-shadow(0 0 ${
-                                heatMode ? 3 + p.node.heat * 12 : isSelected ? 10 : 5
+                                heatMode ? 3 + p.node.heat * 12 : isSelected ? 9 : 3
                               }px ${color})`,
                       }}
                     />
@@ -818,10 +886,11 @@ export default function MindPage() {
           <NodeDetail
             node={selected}
             records={{ projects, tasks, people, reminders }}
+            actions={actions}
             relatedIds={crossRelatedIds}
             nodeIndex={nodeIndex}
             onSelect={goTo}
-            onFocus={() => dive(selected.id)}
+            onEnter={() => dive(selected.id)}
             onClose={() => setSelectedId(null)}
           />
         )}

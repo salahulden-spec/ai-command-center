@@ -350,6 +350,50 @@ export function buildOsTree(input: OsGraphInput): { root: OsNode; crossEdges: Cr
 }
 
 /**
+ * Re-roots the universe on one node.
+ *
+ * Entering a project should not mean "look at a branch of the big tree" — it
+ * should mean that project *becomes* the world: its own tasks orbit it, and so
+ * does everyone connected to it. Relationships drawn as long arcs across the
+ * canvas become short radial spokes here, which is both easier to read and the
+ * whole point of descending.
+ *
+ * A person pulled into orbit is stripped of children, so entering a project
+ * doesn't drag in that person's unrelated work.
+ */
+export function buildOrbit(
+  focus: OsNode,
+  crossEdges: CrossEdge[],
+  nodeIndex: Map<string, OsNode>
+): OsNode {
+  const claimed = new Set<string>([focus.id, ...focus.children.map((c) => c.id)]);
+
+  const partnersOf = (id: string): OsNode[] => {
+    const out: OsNode[] = [];
+    for (const edge of crossEdges) {
+      const otherId = edge.a === id ? edge.b : edge.b === id ? edge.a : null;
+      if (!otherId || claimed.has(otherId)) continue;
+      const other = nodeIndex.get(otherId);
+      if (!other) continue;
+      claimed.add(otherId);
+      out.push({ ...other, children: [] });
+    }
+    return out;
+  };
+
+  // Direct relations are claimed first, so someone linked to the project itself
+  // orbits the centre rather than being taken by whichever task comes first.
+  const direct = partnersOf(focus.id);
+
+  const children = focus.children.map((child) => ({
+    ...child,
+    children: [...child.children.map((g) => ({ ...g, children: [] })), ...partnersOf(child.id)],
+  }));
+
+  return { ...focus, children: [...children, ...direct] };
+}
+
+/**
  * Ring spacing per depth.
  *
  * Kept tight on purpose. The camera frames the whole tree, so every extra
