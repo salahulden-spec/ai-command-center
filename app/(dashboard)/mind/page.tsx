@@ -54,15 +54,22 @@ const STATUS_LEGEND: { status: OsStatus; label: string }[] = [
 ];
 
 const KIND_RADIUS = {
-  owner: 34,
-  hub: 19,
-  project: 15,
-  person: 10,
-  task: 8,
-  reminder: 8,
-  cluster: 12,
-  ghost: 8,
+  owner: 30,
+  hub: 20,
+  project: 16,
+  person: 12,
+  task: 11,
+  reminder: 11,
+  cluster: 14,
+  ghost: 11,
 } as const;
+
+/** Width the desktop inspector occupies, so the camera can keep clear of it. */
+const PANEL_W = 340;
+/** Below this the inspector is a bottom sheet instead of a right rail. */
+const DESKTOP_MIN = 768;
+/** Selecting never leaves the graph smaller than this — captions must stay legible. */
+const READABLE_ZOOM = 0.9;
 
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 3;
@@ -83,7 +90,7 @@ function nodeColor(node: OsNode): string {
 }
 
 function labelWidth(node: OsNode): number {
-  return Math.max(node.label.length * 6, 40);
+  return Math.max(node.label.length * 7, 44);
 }
 
 function fitTransform(
@@ -102,7 +109,7 @@ function fitTransform(
     minX = Math.min(minX, p.x - half);
     maxX = Math.max(maxX, p.x + half);
     minY = Math.min(minY, p.y - KIND_RADIUS[p.node.kind] - 8);
-    maxY = Math.max(maxY, p.y + KIND_RADIUS[p.node.kind] + 22);
+    maxY = Math.max(maxY, p.y + KIND_RADIUS[p.node.kind] + 22 + p.labelTier * 12);
   }
   const k = Math.min(
     maxK,
@@ -300,17 +307,53 @@ export default function MindPage() {
     rafRef.current = requestAnimationFrame(step);
   };
 
-  // Gliding to the focused subtree happens whenever focus changes (and once
-  // the canvas has a size). Deliberately NOT keyed on layout/transform: data
-  // updates must not yank the camera around while the owner is looking.
+  const lastFocusRef = useRef(focusId);
+
+  /**
+   * The camera responds to two different intents, and conflating them is what
+   * made clicking feel dead: a *dive* reframes a whole subtree, while a plain
+   * *selection* should bring that one node into the clear and hold it there.
+   *
+   * Selection also has to dodge the inspector — on desktop it covers the right
+   * ~340px, on mobile the bottom ~60%. Centring in the full canvas would drop
+   * the node you just picked underneath the panel describing it.
+   *
+   * Deliberately NOT keyed on layout/transform: data updates must never yank
+   * the camera while the owner is reading.
+   */
   useEffect(() => {
     if (!size.width || !size.height) return;
-    const subset = placed.filter((p) => focusSet.has(p.node.id));
-    if (!subset.length) return;
-    const target = fitTransform(subset, size.width, size.height, focusId === "owner" ? MAX_ZOOM : 1.6);
-    animateTo(transform, target);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera moves only on focus/resize, never on data churn
-  }, [focusId, size.width, size.height]);
+
+    const focusChanged = lastFocusRef.current !== focusId;
+    lastFocusRef.current = focusId;
+
+    if (focusChanged) {
+      const subset = placed.filter((p) => focusSet.has(p.node.id));
+      if (!subset.length) return;
+      animateTo(
+        transform,
+        fitTransform(subset, size.width, size.height, focusId === "owner" ? MAX_ZOOM : 1.6)
+      );
+      return;
+    }
+
+    if (!selectedId) return;
+    const target = placedById.get(selectedId);
+    if (!target) return;
+
+    const desktop = size.width >= DESKTOP_MIN;
+    const clearWidth = desktop ? size.width - PANEL_W : size.width;
+    // On mobile the sheet owns the lower ~62%, so aim high in what's left.
+    const clearCentreY = desktop ? size.height / 2 : size.height * 0.19;
+    const k = Math.max(transform.k, READABLE_ZOOM);
+
+    animateTo(transform, {
+      k,
+      x: clearWidth / 2 - target.x * k,
+      y: clearCentreY - target.y * k,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera moves only on focus/selection/resize, never on data churn
+  }, [focusId, selectedId, size.width, size.height]);
 
   useEffect(() => stopCamera, []);
 
@@ -727,7 +770,7 @@ export default function MindPage() {
                         textAnchor="middle"
                         dominantBaseline="central"
                         className="pointer-events-none fill-primary font-mono"
-                        style={{ fontSize: 16, fontWeight: 600 }}
+                        style={{ fontSize: 15, fontWeight: 600 }}
                       >
                         {p.node.label.slice(0, 1).toUpperCase()}
                       </text>
@@ -750,11 +793,11 @@ export default function MindPage() {
                         </g>
                       )}
                     <text
-                      y={r + 12}
+                      y={r + 12 + p.labelTier * 12}
                       textAnchor="middle"
                       className="pointer-events-none fill-foreground font-mono"
                       style={{
-                        fontSize: p.node.kind === "owner" ? 12 : p.node.kind === "hub" ? 10.5 : 9,
+                        fontSize: p.node.kind === "owner" ? 14 : p.node.kind === "hub" ? 12.5 : 11,
                         fontStyle: isGhost ? "italic" : undefined,
                         paintOrder: "stroke",
                         stroke: "var(--background)",

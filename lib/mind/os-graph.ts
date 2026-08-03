@@ -52,6 +52,13 @@ export interface PlacedNode {
   y: number;
   /** Whether this node currently shows its children. */
   expanded: boolean;
+  /**
+   * Which caption baseline this node uses (0 or 1). Adjacent siblings on an
+   * outer ring sit close enough that their captions collide side by side;
+   * alternating them onto two baselines separates neighbours without moving
+   * the nodes themselves.
+   */
+  labelTier: number;
 }
 
 export interface CrossEdge {
@@ -342,8 +349,15 @@ export function buildOsTree(input: OsGraphInput): { root: OsNode; crossEdges: Cr
   return { root, crossEdges: [...edges.values()] };
 }
 
-/** Ring spacing per depth. Wider first ring gives the owner node breathing room. */
-const RING = [0, 190, 360, 500, 620];
+/**
+ * Ring spacing per depth.
+ *
+ * Kept tight on purpose. The camera frames the whole tree, so every extra
+ * pixel of radius here is paid for by zooming further out — and at ~28 records
+ * the old spacing forced a fit around 0.3x, where 9px captions became
+ * unreadable smudges. Compact rings buy back the zoom.
+ */
+const RING = [0, 150, 285, 400, 500];
 
 function visibleLeafCount(node: OsNode, expanded: ReadonlySet<string>): number {
   if (!node.children.length || !expanded.has(node.id)) return 1;
@@ -358,7 +372,7 @@ function visibleLeafCount(node: OsNode, expanded: ReadonlySet<string>): number {
  */
 export function layoutRadial(root: OsNode, expanded: ReadonlySet<string>): PlacedNode[] {
   const placed: PlacedNode[] = [
-    { node: root, parentId: null, depth: 0, x: 0, y: 0, expanded: true },
+    { node: root, parentId: null, depth: 0, x: 0, y: 0, expanded: true, labelTier: 0 },
   ];
 
   const place = (
@@ -366,7 +380,8 @@ export function layoutRadial(root: OsNode, expanded: ReadonlySet<string>): Place
     parentId: string,
     depth: number,
     startAngle: number,
-    endAngle: number
+    endAngle: number,
+    siblingIndex: number
   ) => {
     const angle = (startAngle + endAngle) / 2;
     const radius = RING[Math.min(depth, RING.length - 1)];
@@ -378,26 +393,27 @@ export function layoutRadial(root: OsNode, expanded: ReadonlySet<string>): Place
       x: Math.cos(angle) * radius,
       y: Math.sin(angle) * radius,
       expanded: isExpanded,
+      labelTier: siblingIndex % 2,
     });
     if (!isExpanded) return;
 
     const total = node.children.reduce((sum, c) => sum + visibleLeafCount(c, expanded), 0);
     let cursor = startAngle;
-    for (const child of node.children) {
+    node.children.forEach((child, i) => {
       const span = ((endAngle - startAngle) * visibleLeafCount(child, expanded)) / total;
-      place(child, node.id, depth + 1, cursor, cursor + span);
+      place(child, node.id, depth + 1, cursor, cursor + span, i);
       cursor += span;
-    }
+    });
   };
 
   const total = root.children.reduce((sum, c) => sum + visibleLeafCount(c, expanded), 0);
   // Starting at -90° puts the first hub at the top, which reads as "primary".
   let cursor = -Math.PI / 2;
-  for (const child of root.children) {
+  root.children.forEach((child, i) => {
     const span = (Math.PI * 2 * visibleLeafCount(child, expanded)) / (total || 1);
-    place(child, root.id, 1, cursor, cursor + span);
+    place(child, root.id, 1, cursor, cursor + span, i);
     cursor += span;
-  }
+  });
 
   return placed;
 }
