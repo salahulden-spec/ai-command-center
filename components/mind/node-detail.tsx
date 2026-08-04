@@ -355,6 +355,16 @@ export function NodeDetail({
     ? records.projects.find((p) => p.id === task.projectId)
     : null;
 
+  /**
+   * The node's label is cut to fit a card; this panel has room for all of it.
+   * Resolved from the record rather than the graph, so nothing here is elided.
+   * Knowledge is the exception — its caption is a slice of the note, and the
+   * note itself is printed in full below, so repeating it as a heading would
+   * only say the same thing twice.
+   */
+  const fullTitle =
+    project?.name ?? task?.title ?? person?.name ?? reminder?.text ?? entity.label;
+
   const linkedPeople = new Set(related.filter((e) => e.kind === "person").map((e) => e.recordId));
 
   return (
@@ -377,8 +387,8 @@ export function NodeDetail({
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
             <span style={{ color }}>{entity.kind}</span>
           </p>
-          <p className="mt-1 truncate text-base font-medium tracking-tight">{entity.label}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{entity.sublabel}</p>
+          <p className="mt-1 text-base font-medium tracking-tight text-pretty">{fullTitle}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{entity.sublabel}</p>
         </div>
         <button
           onClick={onClose}
@@ -410,6 +420,12 @@ export function NodeDetail({
         {/* ---- Task ---- */}
         {task && (
           <>
+            {task.description && (
+              <p className="whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
+                {task.description}
+              </p>
+            )}
+
             <div>
               <Label>Status</Label>
               <div className="mt-1.5">
