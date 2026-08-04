@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
+  BookOpen,
   Check,
   ChevronRight,
   Home,
@@ -21,6 +22,7 @@ import { allTasksQuery, updateTask, createTask } from "@/lib/firestore/tasks";
 import { peopleQuery } from "@/lib/firestore/people";
 import { remindersQuery, markReminderDone } from "@/lib/firestore/reminders";
 import { linksQuery, createLink } from "@/lib/firestore/links";
+import { memoryQuery } from "@/lib/firestore/memory";
 import {
   buildUniverse,
   relationsOf,
@@ -67,18 +69,26 @@ const KIND_STYLE: Record<
   task: { color: "oklch(0.78 0.14 215)", label: "Task", plural: "Tasks", icon: Check },
   person: { color: "oklch(0.8 0.15 160)", label: "Person", plural: "People", icon: User },
   reminder: { color: "oklch(0.83 0.16 85)", label: "Reminder", plural: "Reminders", icon: Bell },
+  knowledge: {
+    color: "oklch(0.75 0.14 255)",
+    label: "Knowledge",
+    plural: "Knowledge",
+    icon: BookOpen,
+  },
 };
 
 const SECTOR_STYLE = Object.fromEntries(
   Object.entries(KIND_STYLE).map(([kind, style]) => [kind, { color: style.color, label: style.plural }])
 ) as StageFrame["sectorStyle"];
 
-const FILTER_KINDS: EntityKind[] = ["project", "task", "person", "reminder"];
+const FILTER_KINDS: EntityKind[] = ["project", "task", "knowledge", "person", "reminder"];
 const URGENT = "oklch(0.68 0.21 25)";
 /** Pointer travel before a press counts as a pan rather than a tap. */
 const TAP_SLOP = 6;
 /** How many records an attention run walks through. */
 const ATTENTION_LIMIT = 5;
+/** The synthetic id of the dashed observation card. */
+const PROPOSAL_ID = "proposal:focal";
 
 function initialsOf(label: string): string {
   const parts = label.trim().split(/\s+/).filter(Boolean);
@@ -95,6 +105,7 @@ export default function MindPage() {
   const { data: people } = useCollection(useMemo(() => peopleQuery(), []));
   const { data: reminders } = useCollection(useMemo(() => remindersQuery(), []));
   const { data: links } = useCollection(useMemo(() => linksQuery(), []));
+  const { data: memories } = useCollection(useMemo(() => memoryQuery(), []));
 
   const worldRef = useRef<HTMLDivElement>(null);
   const netRef = useRef<HTMLCanvasElement>(null);
@@ -118,8 +129,18 @@ export default function MindPage() {
   const ownerName = user?.displayName?.split(" ")[0] || "You";
 
   const universe = useMemo(
-    () => buildUniverse({ ownerName, projects, tasks, people, reminders, links, now: new Date() }),
-    [ownerName, projects, tasks, people, reminders, links]
+    () =>
+      buildUniverse({
+        ownerName,
+        projects,
+        tasks,
+        people,
+        reminders,
+        memories,
+        links,
+        now: new Date(),
+      }),
+    [ownerName, projects, tasks, people, reminders, memories, links]
   );
 
   const [trail, setTrail] = useState<string[]>([OWNER_ID]);
@@ -135,9 +156,43 @@ export default function MindPage() {
   const selected = selectedId ? (universe.byId.get(selectedId) ?? null) : null;
 
   const relations = useMemo(() => relationsOf(universe, focal.id), [universe, focal.id]);
+
+  /**
+   * The strongest thing the workspace has noticed about where you are standing,
+   * shown as a dashed card. It points at a real record, so tapping it takes you
+   * to the thing that needs doing rather than creating something invented.
+   */
+  const focalAdvice = useMemo(
+    () => adviceFor(universe, focal, { projects, tasks, people, reminders, memories, now: new Date() }),
+    [universe, focal, projects, tasks, people, reminders, memories]
+  );
+  const proposal = useMemo<{ entity: Entity; go: string } | null>(() => {
+    const pick = focalAdvice.find((item) => item.go && universe.byId.has(item.go));
+    if (!pick?.go) return null;
+    const target = universe.byId.get(pick.go)!;
+    return {
+      go: pick.go,
+      entity: {
+        id: PROPOSAL_ID,
+        kind: target.kind,
+        recordId: target.recordId,
+        label: pick.text,
+        sublabel: `points at ${target.label}`,
+        urgent: false,
+        done: false,
+        heat: 0,
+      },
+    };
+  }, [focalAdvice, universe]);
+
   const spatial = useMemo(
-    () => layoutNeighbourhood(universe, focal, relations, { showDone, hidden }),
-    [universe, focal, relations, showDone, hidden]
+    () =>
+      layoutNeighbourhood(universe, focal, relations, {
+        showDone,
+        hidden,
+        proposal: proposal?.entity ?? null,
+      }),
+    [universe, focal, relations, showDone, hidden, proposal]
   );
 
   const doneCount = useMemo(
@@ -221,6 +276,12 @@ export default function MindPage() {
   };
 
   const tapNode = (id: string) => {
+    if (id === PROPOSAL_ID) {
+      if (proposal) {
+        setSelectedId(proposal.go);
+      }
+      return;
+    }
     if (id === focalId) {
       if (trail.length > 1) travelTo(trail[trail.length - 2]);
       return;
@@ -381,8 +442,15 @@ export default function MindPage() {
 
   const advice = useMemo(() => {
     if (!selected) return [];
-    return adviceFor(universe, selected, { projects, tasks, people, reminders, now: new Date() });
-  }, [selected, universe, projects, tasks, people, reminders]);
+    return adviceFor(universe, selected, {
+      projects,
+      tasks,
+      people,
+      reminders,
+      memories,
+      now: new Date(),
+    });
+  }, [selected, universe, projects, tasks, people, reminders, memories]);
 
   const hovered = hoverId ? (universe.byId.get(hoverId) ?? null) : null;
   const hoveredRelated = useMemo(
@@ -395,7 +463,7 @@ export default function MindPage() {
     <NodeDetail
       entity={selected}
       related={relatedOfSelected}
-      records={{ projects, tasks, people, reminders }}
+      records={{ projects, tasks, people, reminders, memories }}
       actions={actions}
       advice={advice}
       gravity={gravityOf(selected)}
@@ -525,11 +593,14 @@ export default function MindPage() {
                   const Icon = style.icon;
                   const urgent = entity.urgent && !entity.done;
                   const degree = (universe.edges.get(entity.id)?.size ?? 1) - 1;
-                  const dim = attentionSet
-                    ? !attentionSet.has(entity.id) && entity.id !== focalId
-                    : highlightSet
-                      ? !highlightSet.has(entity.id) && entity.id !== focalId
-                      : false;
+                  const proposed = p.proposed === true;
+                  const dim = proposed
+                    ? false
+                    : attentionSet
+                      ? !attentionSet.has(entity.id) && entity.id !== focalId
+                      : highlightSet
+                        ? !highlightSet.has(entity.id) && entity.id !== focalId
+                        : false;
                   return (
                     <div
                       key={entity.id}
@@ -540,6 +611,7 @@ export default function MindPage() {
                       data-depth={p.depth}
                       data-done={entity.done}
                       data-urgent={urgent}
+                      data-proposed={proposed}
                       data-selected={selectedId === entity.id}
                       data-hot={highlightSet ? highlightSet.has(entity.id) : false}
                       data-dim={dim}
@@ -547,7 +619,15 @@ export default function MindPage() {
                     >
                       <div className="mv-hit">
                         <div className="mv-card">
-                          {entity.kind === "task" ? (
+                          {proposed && <span className="mv-proposes">Noticed</span>}
+                          {proposed ? (
+                            <div className="mv-row">
+                              <span className="mv-ico">
+                                <Sparkles className="h-3.5 w-3.5" />
+                              </span>
+                              <span className="mv-kind">Go there</span>
+                            </div>
+                          ) : entity.kind === "task" ? (
                             <div className="mv-row">
                               <span className="mv-tick">
                                 <Check className="h-2.5 w-2.5" strokeWidth={4} />
@@ -573,14 +653,14 @@ export default function MindPage() {
                             </div>
                           )}
 
-                          {entity.kind !== "person" && (
+                          {(proposed || entity.kind !== "person") && (
                             <>
                               <h3 className="mv-title">{entity.label}</h3>
                               <p className="mv-sub mv-lod-1">{entity.sublabel}</p>
                             </>
                           )}
 
-                          {entity.kind !== "owner" && entity.kind !== "person" && (
+                          {!proposed && entity.kind !== "owner" && entity.kind !== "person" && (
                             <div className="mv-chips mv-lod-2">
                               {urgent && (
                                 <span className="mv-chip" data-tone="urgent">

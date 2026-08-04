@@ -61,6 +61,8 @@ export type Depth = 0 | 1 | 2;
 export interface Placed {
   entity: Entity;
   depth: Depth;
+  /** A gap the workspace noticed, not a record. Drawn dashed. */
+  proposed?: boolean;
   /** Which first-ring record this hangs off, for second-ring items. */
   parentId: string | null;
   x: number;
@@ -118,6 +120,11 @@ function shareOut(sizes: number[], budget: number): number[] {
 export interface SpatialOptions {
   showDone: boolean;
   hidden: Set<EntityKind>;
+  /**
+   * Something the workspace noticed about the focal record, shown as a dashed
+   * card in whatever arc is emptiest so it never fights a real one.
+   */
+  proposal?: Entity | null;
 }
 
 /**
@@ -297,6 +304,32 @@ export function layoutNeighbourhood(
         angle,
         gravity,
       });
+    });
+  }
+
+  // The proposal goes in the widest gap between real cards.
+  if (options.proposal) {
+    const used = [...angleOf.values()].sort((a, b) => a - b);
+    let best = -Math.PI / 2;
+    let widest = -1;
+    for (let i = 0; i < used.length; i++) {
+      const from = used[i];
+      const to = i === used.length - 1 ? used[0] + TAU : used[i + 1];
+      if (to - from > widest) {
+        widest = to - from;
+        best = (from + to) / 2;
+      }
+    }
+    const radius = BASE_RADIUS + 30;
+    placed.push({
+      entity: options.proposal,
+      depth: 1,
+      proposed: true,
+      parentId: focal.id,
+      x: Math.cos(best) * radius,
+      y: Math.sin(best) * radius,
+      angle: best,
+      gravity: 0.5,
     });
   }
 

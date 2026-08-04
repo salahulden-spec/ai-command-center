@@ -17,6 +17,14 @@ export type Lod = "far" | "near" | "detail";
 
 export const MIN_ZOOM = 0.3;
 export const MAX_ZOOM = 2;
+/**
+ * The auto-fit will not go below this, even if that means the outer ring runs
+ * off the edges — which it is meant to. Fitting everything on screen is how the
+ * map ends up at a third of scale with nothing readable on it; a card you can
+ * read and a space that continues past the frame is the better trade. Zooming
+ * out by hand still goes all the way to MIN_ZOOM.
+ */
+const READABLE_ZOOM = 0.62;
 /** Card padding used for box separation and for trimming edges, in world units. */
 const CARD_PAD = 14;
 /**
@@ -24,6 +32,10 @@ const CARD_PAD = 14;
  * frames; a first paint has one shot at it.
  */
 const SETTLE_PASSES = 8;
+/** One speck per this many square pixels of stage. */
+const DUST_DENSITY = 14000;
+/** Energy packets alive at once along lit connections. */
+const MAX_PACKETS = 12;
 
 /**
  * The ref *objects*, not their contents. Handing over accessor closures would
@@ -46,6 +58,23 @@ export interface StageFrame {
   colors: Map<string, string>;
   sectorStyle: Record<EntityKind, { color: string; label: string }>;
   extent: number;
+}
+
+interface Speck {
+  x: number;
+  y: number;
+  /** Depth, 0..1. Nearer specks are brighter and parallax further. */
+  z: number;
+  r: number;
+  phase: number;
+}
+
+interface Packet {
+  a: string;
+  b: string;
+  t: number;
+  speed: number;
+  color: string;
 }
 
 interface NodeBody extends Body {
@@ -97,10 +126,15 @@ export class MindStage {
   private cam = { x: 0, y: 0, k: 1, tx: 0, ty: 0, tk: 1 };
   private lod: Lod = "near";
   private started = false;
+  /** True once the loop has actually run a frame, which a hidden tab never does. */
+  private ticked = false;
   private raf = 0;
   private reduced = false;
   private lastW = 0;
   private lastH = 0;
+  private dust: Speck[] = [];
+  private packets: Packet[] = [];
+  private clock = 0;
 
   constructor(private refs: StageRefs) {}
 
@@ -148,7 +182,11 @@ export class MindStage {
     this.measure();
     this.fit();
 
-    if (!this.started && this.hostSize()[0] > 0) this.snap();
+    // Records arrive from Firestore over several snapshots, and a body that
+    // appears later starts on whatever it hangs off so it can grow outward.
+    // That is the animation — but only if there are frames to animate in. Until
+    // one has run, jump straight to the laid-out picture instead.
+    if (!this.ticked && this.hostSize()[0] > 0) this.snap();
     this.paint();
   }
 
@@ -196,6 +234,7 @@ export class MindStage {
     const tick = (now: number) => {
       const dt = Math.min(3, Math.max(0.2, (now - last) / 16.67));
       last = now;
+      this.ticked = true;
       this.step(dt);
       this.paint();
       this.raf = requestAnimationFrame(tick);
@@ -228,7 +267,52 @@ export class MindStage {
     this.started = true;
   }
 
+  /**
+   * A field of slow specks behind everything.
+   *
+   * It is not decoration for its own sake: without something at a different
+   * depth, panning has no parallax and the map reads as a flat diagram rather
+   * than a space you are moving through.
+   */
+  private seedDust(w: number, h: number): void {
+    if (this.reduced) {
+      this.dust = [];
+      return;
+    }
+    const count = Math.round((w * h) / DUST_DENSITY);
+    this.dust = Array.from({ length: count }, () => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      z: 0.3 + Math.random() * 0.9,
+      r: 0.4 + Math.random() * 1.3,
+      phase: Math.random() * Math.PI * 2,
+    }));
+  }
+
+  /** Sends a pulse along a connection, if one is on screen. */
+  private emitPacket(): void {
+    const frame = this.frame;
+    if (!frame || this.reduced || this.packets.length >= MAX_PACKETS) return;
+    const live = frame.edges.filter(([a, b]) => this.bodies.has(a) && this.bodies.has(b));
+    if (!live.length) return;
+    const [a, b] = live[Math.floor(Math.random() * live.length)];
+    this.packets.push({
+      a,
+      b,
+      t: 0,
+      speed: 0.005 + Math.random() * 0.006,
+      color: frame.colors.get(a) ?? "oklch(0.85 0.17 195)",
+    });
+  }
+
   private step(dt: number): void {
+    this.clock += dt;
+    if (!this.reduced && Math.random() < 0.012) this.emitPacket();
+    this.packets = this.packets.filter((p) => {
+      p.t += p.speed * dt;
+      return p.t <= 1 && this.bodies.has(p.a) && this.bodies.has(p.b);
+    });
+
     const c = this.cam;
     const ease = this.reduced ? 1 : 0.12;
     c.k += (c.tk - c.k) * ease;
@@ -276,7 +360,7 @@ export class MindStage {
     const pad = w < 640 ? 24 : 52;
     this.cam.tk = Math.min(
       MAX_ZOOM,
-      Math.max(MIN_ZOOM, Math.min(w - pad * 2, h - pad * 2) / (this.frame.extent * 2))
+      Math.max(READABLE_ZOOM, Math.min(w - pad * 2, h - pad * 2) / (this.frame.extent * 2))
     );
   }
 
@@ -293,6 +377,7 @@ export class MindStage {
     if (w && h && (w !== this.lastW || h !== this.lastH)) {
       this.lastW = w;
       this.lastH = h;
+      this.seedDust(w, h);
       this.fit();
       if (!this.started) this.snap();
     }
@@ -337,6 +422,21 @@ export class MindStage {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    /** Screen-space control points, so a packet follows the drawn curve. */
+    const curves = new Map<string, number[]>();
+
+    // Depth, drawn first. Specks drift with the camera at a fraction of its
+    // speed, which is what gives panning any sense of parallax.
+    for (const speck of this.dust) {
+      const px = (((speck.x - this.cam.x * speck.z * 0.06) % w) + w) % w;
+      const py = (((speck.y - this.cam.y * speck.z * 0.06) % h) + h) % h;
+      ctx.globalAlpha = (0.1 + 0.16 * (Math.sin(this.clock * 0.02 + speck.phase) * 0.5 + 0.5)) * speck.z;
+      ctx.fillStyle = "oklch(0.85 0.06 240)";
+      ctx.beginPath();
+      ctx.arc(px, py, speck.r * speck.z, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 
     for (const [a, b] of frame.edges) {
       const pa = this.bodies.get(a);
@@ -376,6 +476,8 @@ export class MindStage {
       const cx = (sx1 + sx2) / 2 + (nx / len) * bow;
       const cy = (sy1 + sy2) / 2 + (ny / len) * bow;
 
+      curves.set(a < b ? `${a}|${b}` : `${b}|${a}`, [sx1, sy1, cx, cy, sx2, sy2]);
+
       const [first, second] = halves(sx1, sy1, cx, cy, sx2, sy2);
       ctx.globalAlpha = alpha;
       ctx.lineWidth = lit || onAttention ? 1.8 : 1;
@@ -389,7 +491,47 @@ export class MindStage {
         ctx.quadraticCurveTo(seg[2], seg[3], seg[4], seg[5]);
         ctx.stroke();
       }
+
+      // A connection you are looking at is drawn as flowing, not merely lit.
+      if ((lit || onAttention) && !this.reduced) {
+        ctx.save();
+        ctx.setLineDash([3, 9]);
+        ctx.lineDashOffset = -(this.clock * 0.75) % 12;
+        ctx.globalAlpha = onAttention ? 0.5 : 0.34;
+        ctx.strokeStyle = "oklch(0.98 0.01 220)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sx1, sy1);
+        ctx.quadraticCurveTo(cx, cy, sx2, sy2);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
+
+    // Packets ride the curve their connection was drawn on.
+    for (const packet of this.packets) {
+      const curve = curves.get(
+        packet.a < packet.b ? `${packet.a}|${packet.b}` : `${packet.b}|${packet.a}`
+      );
+      if (!curve) continue;
+      const [x0, y0, qx, qy, x1c, y1c] = curve;
+      const t = packet.t;
+      const inv = 1 - t;
+      const px = inv * inv * x0 + 2 * inv * t * qx + t * t * x1c;
+      const py = inv * inv * y0 + 2 * inv * t * qy + t * t * y1c;
+      const fade = Math.sin(t * Math.PI);
+
+      ctx.fillStyle = packet.color;
+      ctx.globalAlpha = 0.85 * fade;
+      ctx.beginPath();
+      ctx.arc(px, py, 2.2 * k + 0.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.16 * fade;
+      ctx.beginPath();
+      ctx.arc(px, py, 8 * k + 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 
     // Sector captions sit just inside the first ring.
     ctx.globalAlpha = this.attention ? 0.2 : 0.62;

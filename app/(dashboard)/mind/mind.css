@@ -16,9 +16,12 @@
   cursor: grab;
   touch-action: none;
   user-select: none;
+  /* Two coloured pools at opposite corners plus a warm sliver, so the field has
+     somewhere to be deep rather than being one flat wash of background. */
   background:
-    radial-gradient(115% 85% at 24% 16%, color-mix(in oklch, var(--chart-7) 12%, transparent), transparent 62%),
-    radial-gradient(95% 75% at 82% 80%, color-mix(in oklch, var(--primary) 10%, transparent), transparent 60%);
+    radial-gradient(112% 82% at 22% 14%, color-mix(in oklch, var(--chart-7) 26%, transparent), transparent 60%),
+    radial-gradient(96% 76% at 84% 82%, color-mix(in oklch, var(--primary) 20%, transparent), transparent 58%),
+    radial-gradient(64% 54% at 58% 6%, color-mix(in oklch, var(--chart-4) 8%, transparent), transparent 70%);
 }
 .mv-stage[data-panning="true"] {
   cursor: grabbing;
@@ -286,6 +289,42 @@
       inset 0 1px 0 color-mix(in oklch, white 7%, transparent),
       0 0 36px -6px var(--kc);
   }
+}
+
+/* Knowledge — a folded corner, because it is a page rather than a job. */
+.mv-node[data-kind="knowledge"] .mv-card {
+  width: 192px;
+  border-radius: 12px;
+}
+.mv-node[data-kind="knowledge"] .mv-card::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  border-top-right-radius: 12px;
+  background: linear-gradient(
+    225deg,
+    color-mix(in oklch, var(--kc) 40%, transparent) 0 50%,
+    transparent 50%
+  );
+}
+
+/* A noticed gap, not a record: dashed, unfilled, deliberately quieter. */
+.mv-node[data-proposed="true"] .mv-card {
+  background: color-mix(in oklch, var(--card) 55%, transparent);
+  border: 1.5px dashed color-mix(in oklch, var(--kc) 55%, transparent);
+  box-shadow: none;
+}
+.mv-proposes {
+  display: block;
+  margin-bottom: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--kc) 85%, transparent);
 }
 
 /* Project — the widest card, footed with its own progress. */

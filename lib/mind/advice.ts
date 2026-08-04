@@ -1,4 +1,4 @@
-import type { Person, Project, Reminder, Task } from "@/types";
+import type { Memory, Person, Project, Reminder, Task } from "@/types";
 import type { Entity, Universe } from "./universe";
 
 /**
@@ -26,6 +26,7 @@ export interface AdviceInput {
   tasks: Task[];
   people: Person[];
   reminders: Reminder[];
+  memories: Memory[];
   now: Date;
 }
 
@@ -196,6 +197,35 @@ export function adviceFor(universe: Universe, entity: Entity, input: AdviceInput
         id: "person-idle",
         text: "Not connected to any live work.",
         weight: 0.35,
+      });
+    }
+  }
+
+  if (entity.kind === "knowledge") {
+    const age = daysSince(
+      input.memories.find((m) => m.id === recordId)?.createdAt,
+      now
+    );
+    const attached = neighbours.filter((e) => e.kind !== "owner");
+    if (attached.length) {
+      out.push({
+        id: "knowledge-cited",
+        text: `Attached to ${plural(attached.length, "record")}.`,
+        weight: 0.4,
+        go: attached[0].id,
+      });
+    } else {
+      out.push({
+        id: "knowledge-loose",
+        text: "Filed against nothing — it will only surface if you go looking.",
+        weight: 0.48,
+      });
+    }
+    if (age !== null && age >= 30) {
+      out.push({
+        id: "knowledge-stale",
+        text: `Recorded ${plural(age, "day")} ago and not revisited.`,
+        weight: Math.min(0.7, 0.4 + age / 200),
       });
     }
   }

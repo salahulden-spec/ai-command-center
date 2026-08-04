@@ -46,6 +46,7 @@ const build = (over: Partial<UniverseInput> = {}) => {
     tasks: [],
     people: [],
     reminders: [],
+    memories: [],
     links: [],
     now: NOW,
     ...over,
@@ -56,6 +57,7 @@ const build = (over: Partial<UniverseInput> = {}) => {
     tasks: input.tasks,
     people: input.people,
     reminders: input.reminders,
+    memories: input.memories,
     now: NOW,
   };
   return { universe, advice };

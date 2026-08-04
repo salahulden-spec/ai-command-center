@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import type { Advice } from "@/lib/mind/advice";
 import type { Entity, EntityKind } from "@/lib/mind/universe";
 import type {
+  Memory,
   Person,
   Project,
   ProjectStatus,
@@ -35,6 +36,7 @@ export interface MindRecords {
   tasks: Task[];
   people: Person[];
   reminders: Reminder[];
+  memories: Memory[];
 }
 
 export interface MindActions {
@@ -67,6 +69,7 @@ const KIND_COLOR: Record<EntityKind, string> = {
   task: "oklch(0.78 0.14 215)",
   person: "oklch(0.8 0.15 160)",
   reminder: "oklch(0.83 0.16 85)",
+  knowledge: "oklch(0.75 0.14 255)",
 };
 
 /** Entity ids are `kind:recordId`; a record id may itself contain colons. */
@@ -343,6 +346,8 @@ export function NodeDetail({
   const person = entity.kind === "person" ? records.people.find((p) => p.id === recordId) : null;
   const reminder =
     entity.kind === "reminder" ? records.reminders.find((r) => r.id === recordId) : null;
+  const memory =
+    entity.kind === "knowledge" ? records.memories.find((m) => m.id === recordId) : null;
 
   const projectTasks = project ? records.tasks.filter((t) => t.projectId === project.id) : [];
   const projectOpen = projectTasks.filter((t) => t.status !== "done");
@@ -597,6 +602,21 @@ export function NodeDetail({
                 Mark done
               </Button>
             )}
+          </>
+        )}
+
+        {/* ---- Knowledge ---- */}
+        {memory && (
+          <>
+            {/* The node caption is truncated to fit a card; this is the whole of it. */}
+            <p className="whitespace-pre-line text-xs leading-relaxed">{memory.content}</p>
+            <div className="divide-y divide-border/40">
+              <Field label="Kind">{memory.type}</Field>
+              <Field label="Recorded">
+                {relativeDays(memory.createdAt)}
+                {memory.source === "ai" && " · by assistant"}
+              </Field>
+            </div>
           </>
         )}
 

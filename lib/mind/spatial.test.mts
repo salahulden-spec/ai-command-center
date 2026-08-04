@@ -56,6 +56,7 @@ const base: UniverseInput = {
   tasks: [],
   people: [],
   reminders: [],
+  memories: [],
   links: [],
   now: NOW,
 };

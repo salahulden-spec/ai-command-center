@@ -1,4 +1,4 @@
-import type { EntityLink, Person, Project, Reminder, Task } from "@/types";
+import type { EntityLink, Memory, Person, Project, Reminder, Task } from "@/types";
 
 /**
  * The Mind View's model, rebuilt around one idea: you are always standing
@@ -19,7 +19,7 @@ import type { EntityLink, Person, Project, Reminder, Task } from "@/types";
  *    a readable ring.
  */
 
-export type EntityKind = "owner" | "project" | "task" | "person" | "reminder";
+export type EntityKind = "owner" | "project" | "task" | "person" | "reminder" | "knowledge";
 
 export interface Entity {
   /** `${kind}:${recordId}` — the graph's identity, distinct from the Firestore id. */
@@ -48,6 +48,8 @@ export interface UniverseInput {
   tasks: Task[];
   people: Person[];
   reminders: Reminder[];
+  /** The Knowledge page's records — facts, preferences, decisions. */
+  memories: Memory[];
   links: EntityLink[];
   now: Date;
 }
@@ -177,6 +179,22 @@ export function buildUniverse(input: UniverseInput): Universe {
     connect(byId.has(parent) ? parent : OWNER_ID, `reminder:${reminder.id}`);
   }
 
+  for (const memory of input.memories) {
+    add({
+      id: `knowledge:${memory.id}`,
+      kind: "knowledge",
+      recordId: memory.id,
+      label: truncate(memory.content, 30),
+      sublabel: memory.type,
+      urgent: false,
+      // Knowledge is never finished, only stale — it has no done state.
+      done: false,
+      heat: heatOf(memory.createdAt, now),
+    });
+    const parent = memory.relatedProjectId ? `project:${memory.relatedProjectId}` : OWNER_ID;
+    connect(byId.has(parent) ? parent : OWNER_ID, `knowledge:${memory.id}`);
+  }
+
   // Explicit relationships recorded by the assistant or by hand.
   for (const link of input.links) {
     connect(`${link.sourceType}:${link.sourceId}`, `${link.targetType}:${link.targetId}`);
@@ -200,13 +218,18 @@ export function buildUniverse(input: UniverseInput): Universe {
         connect(`person:${person.id}`, `reminder:${reminder.id}`);
       }
     }
+    for (const memory of input.memories) {
+      if (mentions(memory.content, person.name)) {
+        connect(`person:${person.id}`, `knowledge:${memory.id}`);
+      }
+    }
   }
 
   return { byId, edges };
 }
 
 /** Order sectors appear in, clockwise from the top. */
-const KIND_ORDER: EntityKind[] = ["project", "task", "person", "reminder", "owner"];
+const KIND_ORDER: EntityKind[] = ["project", "task", "knowledge", "person", "reminder", "owner"];
 
 export interface RelationGroup {
   kind: EntityKind;
