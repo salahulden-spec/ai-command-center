@@ -78,11 +78,12 @@ export function adviceFor(universe: Universe, entity: Entity, input: AdviceInput
         go: `project:${stalled[0].id}`,
       });
     }
-    const loose = input.people.filter((p) => (universe.edges.get(`person:${p.id}`)?.size ?? 0) <= 1);
+    // Unattached people have no edges at all now, including the one to you.
+    const loose = input.people.filter((p) => (universe.edges.get(`person:${p.id}`)?.size ?? 0) === 0);
     if (loose.length) {
       out.push({
         id: "owner-loose-people",
-        text: `${plural(loose.length, "contact")} ${loose.length === 1 ? "is" : "are"} not attached to any work.`,
+        text: `${plural(loose.length, "contact")} ${loose.length === 1 ? "is" : "are"} not attached to any work, so ${loose.length === 1 ? "it is" : "they are"} off the map.`,
         weight: 0.34,
         go: `person:${loose[0].id}`,
       });

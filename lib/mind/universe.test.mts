@@ -65,7 +65,10 @@ test("every record reaches the owner, directly or through its project", () => {
   });
 
   assert.ok(u.edges.get(OWNER_ID)!.has("project:p1"));
-  assert.ok(u.edges.get(OWNER_ID)!.has("person:pe1"), "people connect to you");
+  assert.ok(
+    !u.edges.get(OWNER_ID)!.has("person:pe1"),
+    "a contact with nothing attached is not on the map at all"
+  );
   assert.ok(u.edges.get(OWNER_ID)!.has("task:t2"), "a standalone task hangs off you");
   assert.ok(u.edges.get("project:p1")!.has("task:t1"), "a project task hangs off its project");
   assert.ok(!u.edges.get(OWNER_ID)!.has("task:t1"), "and not off you as well");
@@ -147,9 +150,41 @@ test("layout puts every node on a ring and never stacks two in one spot", () => 
 });
 
 test("an isolated focal entity lays out cleanly instead of dividing by zero", () => {
-  const u = buildUniverse({ ...base, people: [person("pe1", "Ahmed")] });
+  // A contact named in a task is on the map; the task is their only neighbour.
+  const u = buildUniverse({
+    ...base,
+    people: [person("pe1", "Ahmed")],
+    tasks: [task("t1", "Call Ahmed", null)],
+  });
   const groups = relationsOf(u, "person:pe1");
   const { placed } = layoutOrbit(groups);
-  assert.equal(placed.length, 1, "only the owner");
+  assert.equal(placed.length, 2, "the task, and the way back up to you");
   assert.ok(Number.isFinite(placed[0].x) && Number.isFinite(placed[0].y));
+});
+
+test("a contact earns a place on the map by being involved in something", () => {
+  const alone = buildUniverse({ ...base, people: [person("pe1", "Ahmed")] });
+  assert.equal(alone.edges.get("person:pe1")!.size, 0, "nothing attached, nothing drawn");
+  assert.ok(alone.byId.has("person:pe1"), "but the contact still exists");
+
+  const named = buildUniverse({
+    ...base,
+    people: [person("pe1", "Ahmed")],
+    tasks: [task("t1", "Call Ahmed about pricing", null)],
+  });
+  assert.ok(named.edges.get("person:pe1")!.has("task:t1"), "being named counts");
+  assert.ok(
+    named.edges.get(OWNER_ID)!.has("person:pe1"),
+    "and once involved, they hang off you again"
+  );
+
+  const assigned = buildUniverse({
+    ...base,
+    projects: [project("p1", "Alpha")],
+    people: [person("pe1", "Ahmed")],
+    links: [
+      { id: "l1", sourceType: "person", sourceId: "pe1", targetType: "project", targetId: "p1", createdAt: ts() } as never,
+    ],
+  });
+  assert.ok(assigned.edges.get(OWNER_ID)!.has("person:pe1"), "so does being assigned");
 });

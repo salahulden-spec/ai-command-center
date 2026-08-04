@@ -225,6 +225,25 @@ export function buildUniverse(input: UniverseInput): Universe {
     }
   }
 
+  // A contact earns its place on the map by being involved in something.
+  //
+  // Everyone is attached to you the moment they are recorded, which meant a
+  // workspace full of people you have merely met crowded the ring and pushed
+  // the actual work outward. If nothing else ever attaches to a person, that
+  // lone edge to you is dropped and they fall out of the picture — they stay in
+  // the workspace, and they reappear the instant they are assigned anything or
+  // named in a task.
+  for (const person of input.people) {
+    const id = `person:${person.id}`;
+    const attachments = edges.get(id);
+    if (!attachments) continue;
+    const beyondOwner = [...attachments].some((other) => other !== OWNER_ID);
+    if (!beyondOwner) {
+      attachments.delete(OWNER_ID);
+      edges.get(OWNER_ID)?.delete(id);
+    }
+  }
+
   return { byId, edges };
 }
 

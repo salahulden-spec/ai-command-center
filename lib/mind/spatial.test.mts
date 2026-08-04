@@ -39,6 +39,17 @@ const task = (id: string, title: string, projectId: string | null, extra: Record
 const person = (id: string, name: string) =>
   ({ id, name, company: "", notes: "", createdAt: ts() }) as never;
 
+/** Contacts only appear once something is attached, so fixtures must attach. */
+const worksOn = (personId: string, projectId: string) =>
+  ({
+    id: `l-${personId}`,
+    sourceType: "person",
+    sourceId: personId,
+    targetType: "project",
+    targetId: projectId,
+    createdAt: ts(),
+  }) as never;
+
 const reminder = (id: string, text: string, extra: Record<string, unknown> = {}) =>
   ({
     id,
@@ -151,6 +162,7 @@ test("a crowded first ring is budgeted, and the sector says what it stands for",
     projects: Array.from({ length: 4 }, (_, i) => project(`p${i}`, `Project ${i}`)),
     people: Array.from({ length: 18 }, (_, i) => person(`pe${i}`, `Person ${i}`)),
     tasks: [task("t1", "Loose", null)],
+    links: Array.from({ length: 18 }, (_, i) => worksOn(`pe${i}`, "p0")),
   });
 
   const { placed, sectors } = lay(u, u.byId.get(OWNER_ID)!, OPTS);
@@ -168,11 +180,15 @@ test("a crowded first ring is budgeted, and the sector says what it stands for",
 test("overflow moves outward rather than crowding one ring", () => {
   const few = buildUniverse({
     ...base,
+    projects: [project("p0", "Alpha")],
     people: Array.from({ length: 3 }, (_, i) => person(`pe${i}`, `Person ${i}`)),
+    links: Array.from({ length: 3 }, (_, i) => worksOn(`pe${i}`, "p0")),
   });
   const many = buildUniverse({
     ...base,
+    projects: [project("p0", "Alpha")],
     people: Array.from({ length: 14 }, (_, i) => person(`pe${i}`, `Person ${i}`)),
+    links: Array.from({ length: 14 }, (_, i) => worksOn(`pe${i}`, "p0")),
   });
 
   const one = lay(few, few.byId.get(OWNER_ID)!, OPTS);
@@ -203,6 +219,7 @@ test("hidden types and finished work drop out of the picture", () => {
     projects: [project("p1", "Alpha")],
     people: [person("pe1", "Ahmed")],
     tasks: [task("t1", "Finished", null, { status: "done" })],
+    links: [worksOn("pe1", "p1")],
   });
   const focal = u.byId.get(OWNER_ID)!;
 
@@ -262,6 +279,7 @@ test("the opening picture settles with no card sitting on another", () => {
     ],
     people: Array.from({ length: 10 }, (_, i) => person(`pe${i}`, `Person Number${i}`)),
     reminders: Array.from({ length: 5 }, (_, i) => reminder(`r${i}`, `Remember this thing ${i}`)),
+    links: Array.from({ length: 10 }, (_, i) => worksOn(`pe${i}`, "p0")),
   });
 
   const { placed } = lay(u, u.byId.get(OWNER_ID)!, OPTS);
