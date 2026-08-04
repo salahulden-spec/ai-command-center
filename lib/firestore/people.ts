@@ -11,6 +11,7 @@ import {
   query,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import { deleteLinksTouching } from "./links";
 import { makeConverter } from "./converter";
 import type { Person } from "@/types";
 
@@ -57,7 +58,9 @@ export async function appendPersonNote(
   return updateDoc(doc(db, "people", personId), patch);
 }
 
+/** Takes the contact's relationships with it, so no edge points at nobody. */
 export async function deletePerson(personId: string) {
+  await deleteLinksTouching("person", personId);
   return deleteDoc(doc(db, "people", personId));
 }
 

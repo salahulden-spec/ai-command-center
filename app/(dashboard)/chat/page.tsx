@@ -5,12 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { onSnapshot, Timestamp } from "firebase/firestore";
 import { useChat } from "@ai-sdk/react";
+import { Trash2 } from "lucide-react";
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { DESTRUCTIVE_ACTIONS } from "@/lib/assistant/destructive";
 import { auth } from "@/lib/firebase/client";
 import { Markdown } from "@/components/chat/markdown";
 import { useAuth } from "@/hooks/use-auth";
@@ -192,6 +194,14 @@ function summarizeAction(toolName: string, input: Record<string, unknown>): stri
       return `Connect ${input.personName} to "${input.targetLabel}"`;
     case "updateTask":
       return `Update task "${input.taskTitle}"`;
+    case "deleteProject":
+      return `Delete project "${input.projectName}" and everything filed under it`;
+    case "deletePerson":
+      return `Delete contact "${input.personName}"`;
+    case "deleteReminder":
+      return `Delete reminder "${input.reminderText}"`;
+    case "deleteKnowledge":
+      return `Forget "${input.summary}"`;
     case "updateProject":
       return `Update project "${input.projectName}"`;
     case "completeTask":
@@ -440,7 +450,10 @@ function ChatConversation({
         mutationPayload = { ...toolInput, embedding };
       }
 
-      if (aiMode === "execute") {
+      // Auto-execute is permission to get on with the work, not permission to
+      // throw it away. Deletion has no undo, so it queues whatever the mode is
+      // — the same rule the server-side tools apply in orchestrator.ts.
+      if (aiMode === "execute" && !DESTRUCTIVE_ACTIONS.has(mutationType)) {
         // Echoed into the tool result so the model can chain within one
         // message (create Ahmed -> link Ahmed) using real ids, never guesses.
         let createdId: string | null = null;
@@ -597,7 +610,9 @@ function ChatConversation({
         addToolResult({
           tool: toolName,
           toolCallId,
-          output: "Queued for your approval — see Pending Actions.",
+          output: DESTRUCTIVE_ACTIONS.has(mutationType)
+            ? "Waiting on your approval before anything is deleted. Nothing has changed yet."
+            : "Queued for your approval — see Pending Actions.",
         });
       }
     },
@@ -675,28 +690,51 @@ function ChatConversation({
       {pendingActions.length > 0 && (
         <div className="flex flex-col gap-2">
           <h2 className="font-mono text-[0.65rem] uppercase tracking-widest text-muted-foreground">
-            Pending Actions
+            Waiting for you
           </h2>
-          {pendingActions.map((action) => (
-            <div
-              key={action.id}
-              className="glow-border flex items-center justify-between rounded-md border bg-card/60 px-3 py-2"
-            >
-              <span className="text-sm">{action.summary}</span>
-              <div className="flex items-center gap-2">
-                <Button size="sm" onClick={() => void approvePendingAction(action)}>
-                  Approve
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void rejectPendingAction(action.id)}
-                >
-                  Reject
-                </Button>
+          {pendingActions.map((action) => {
+            const destroys = DESTRUCTIVE_ACTIONS.has(action.actionType);
+            return (
+              <div
+                key={action.id}
+                className={cn(
+                  "flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2",
+                  destroys
+                    ? "border-destructive/50 bg-destructive/10"
+                    : "glow-border bg-card/60"
+                )}
+              >
+                <span className="flex min-w-0 items-center gap-2 text-sm">
+                  {destroys && (
+                    <Trash2 className="h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden="true" />
+                  )}
+                  <span className="min-w-0">
+                    {action.summary}
+                    {/* Deletion is the one thing the app cannot walk back. */}
+                    {destroys && (
+                      <span className="ml-1.5 text-xs text-destructive">Cannot be undone.</span>
+                    )}
+                  </span>
+                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant={destroys ? "destructive" : "default"}
+                    onClick={() => void approvePendingAction(action)}
+                  >
+                    {destroys ? "Delete" : "Approve"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void rejectPendingAction(action.id)}
+                  >
+                    {destroys ? "Keep it" : "Reject"}
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

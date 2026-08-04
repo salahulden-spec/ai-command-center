@@ -12,13 +12,13 @@ import {
 import { db } from "@/lib/firebase/client";
 import { makeConverter } from "./converter";
 import type { PendingAction, PendingActionType } from "@/types";
-import { createProject, updateProject } from "./projects";
+import { createProject, updateProject, deleteProject } from "./projects";
 import { createTask, updateTaskStatus, updateTask, deleteTask } from "./tasks";
-import { createReminder, markReminderDone } from "./reminders";
-import { createPerson, appendPersonNote } from "./people";
+import { createReminder, markReminderDone, deleteReminder } from "./reminders";
+import { createPerson, appendPersonNote, deletePerson } from "./people";
 import { createInboxItem } from "./inbox";
 import { createLink } from "./links";
-import { createMemory } from "./memory";
+import { createMemory, deleteMemory } from "./memory";
 import { createDecision } from "./decisions";
 import { createResearchEntry } from "./research";
 import { createFiledDocument } from "./documents";
@@ -136,6 +136,28 @@ export async function approvePendingAction(action: PendingAction) {
         projectId: string | null;
       };
       await deleteTask(projectId, taskId);
+      break;
+    }
+    case "deleteProject": {
+      const { projectId } = action.payload as { projectId: string };
+      // Cascades to the project's tasks, research, decisions, documents, their
+      // Storage blobs, and every relationship touching any of it.
+      await deleteProject(projectId);
+      break;
+    }
+    case "deletePerson": {
+      const { personId } = action.payload as { personId: string };
+      await deletePerson(personId);
+      break;
+    }
+    case "deleteReminder": {
+      const { reminderId } = action.payload as { reminderId: string };
+      await deleteReminder(reminderId);
+      break;
+    }
+    case "deleteKnowledge": {
+      const { memoryId } = action.payload as { memoryId: string };
+      await deleteMemory(memoryId);
       break;
     }
     case "updateProject": {

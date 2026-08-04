@@ -11,6 +11,7 @@ import {
 } from "firebase/firestore";
 import { ref, deleteObject } from "firebase/storage";
 import { db, storage } from "@/lib/firebase/client";
+import { deleteLinksTouching } from "./links";
 import { makeConverter } from "./converter";
 import type { Project, ProjectStatus } from "@/types";
 
@@ -62,6 +63,13 @@ export async function deleteProject(projectId: string) {
     getDocs(collection(db, "projects", projectId, "research")),
     getDocs(collection(db, "projects", projectId, "decisions")),
     getDocs(collection(db, "projects", projectId, "documents")),
+  ]);
+
+  // Relationships are stored outside the project, so the cascade has to reach
+  // them explicitly — for the project itself and for every task under it.
+  await Promise.all([
+    deleteLinksTouching("project", projectId),
+    ...tasksSnap.docs.map((docSnap) => deleteLinksTouching("task", docSnap.id)),
   ]);
 
   await Promise.all(

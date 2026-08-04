@@ -12,6 +12,7 @@ import {
   query,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import { deleteLinksTouching } from "./links";
 import { makeConverter } from "./converter";
 import type { Reminder } from "@/types";
 
@@ -40,7 +41,9 @@ export async function markReminderDone(reminderId: string) {
   return updateDoc(doc(db, "reminders", reminderId), { status: "done" });
 }
 
+/** Takes its relationships with it, so no edge points at nothing. */
 export async function deleteReminder(reminderId: string) {
+  await deleteLinksTouching("reminder", reminderId);
   return deleteDoc(doc(db, "reminders", reminderId));
 }
 

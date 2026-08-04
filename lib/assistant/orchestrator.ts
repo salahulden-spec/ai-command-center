@@ -4,6 +4,7 @@ import { adminDb, AdminFieldValue, AdminTimestamp } from "@/lib/firebase/admin";
 import { zonedTimeToUtc } from "./timezone";
 import { loadWorkspaceSnapshot } from "./context";
 import { CAPTURE_POLICY } from "./capture-policy";
+import { isDestructive } from "./destructive";
 import { loadThread, appendTurns, clearThread, type Turn } from "./thread";
 import type { AiMode, PendingActionType } from "@/types";
 
@@ -74,6 +75,10 @@ async function mutate(
   payload: Record<string, unknown>,
   direct: () => Promise<void | string>
 ): Promise<string> {
+  if (isDestructive(actionType)) {
+    await queuePendingAction(actionType, summary, payload);
+    return `Waiting on your approval before anything is deleted — ${summary}. Nothing has changed yet.`;
+  }
   if (aiMode === "execute") {
     const id = await direct();
     return typeof id === "string" ? `Done — ${summary}. (id: ${id})` : `Done — ${summary}.`;
@@ -283,9 +288,76 @@ function buildTools(aiMode: AiMode) {
           `delete task "${taskTitle}"`,
           { taskId, projectId },
           async () => {
-            await tasksRef(projectId).doc(taskId).delete();
+            // Never reached: deletes always queue. The approval path owns the
+            // cascade, so the task's relationships go with it.
           }
         ),
+    }),
+
+    deleteProject: tool({
+      description:
+        "Permanently delete a project AND everything filed under it — its tasks, research, decisions and uploaded documents. There is no undo. For work that is simply finished use updateProject with status done or archived instead. Always tell the user what will go with it.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        projectName: z.string().describe("For the confirmation message"),
+      }),
+      execute: async ({ projectId, projectName }) => {
+        const refError = await projectRefError(projectId);
+        if (refError) return refError;
+        const taskCount = (await db.collection("projects").doc(projectId).collection("tasks").get())
+          .size;
+        return mutate(
+          aiMode,
+          "deleteProject",
+          taskCount > 0
+            ? `delete project "${projectName}" and the ${taskCount} task${taskCount === 1 ? "" : "s"} under it`
+            : `delete project "${projectName}"`,
+          { projectId },
+          async () => {
+            // Never reached: deletes always queue. The approval path owns the
+            // cascade, because it needs the browser SDK for Storage cleanup.
+          }
+        );
+      },
+    }),
+
+    deletePerson: tool({
+      description:
+        "Permanently delete a contact and every relationship they have. There is no undo. Use this only when the user says to remove the person entirely.",
+      inputSchema: z.object({
+        personId: z.string(),
+        personName: z.string().describe("For the confirmation message"),
+      }),
+      execute: async ({ personId, personName }) =>
+        mutate(aiMode, "deletePerson", `delete contact "${personName}"`, { personId }, async () => {}),
+    }),
+
+    deleteReminder: tool({
+      description:
+        "Permanently delete a reminder the user no longer wants. To mark one as handled use completeReminder instead.",
+      inputSchema: z.object({
+        reminderId: z.string(),
+        reminderText: z.string().describe("For the confirmation message"),
+      }),
+      execute: async ({ reminderId, reminderText }) =>
+        mutate(
+          aiMode,
+          "deleteReminder",
+          `delete reminder "${reminderText}"`,
+          { reminderId },
+          async () => {}
+        ),
+    }),
+
+    deleteKnowledge: tool({
+      description:
+        "Permanently delete something remembered in Knowledge, when the user says a stored fact is wrong or no longer wanted. Find the id with searchMemory first.",
+      inputSchema: z.object({
+        memoryId: z.string(),
+        summary: z.string().describe("A short quote of what is being forgotten, for the confirmation"),
+      }),
+      execute: async ({ memoryId, summary }) =>
+        mutate(aiMode, "deleteKnowledge", `forget "${summary}"`, { memoryId }, async () => {}),
     }),
 
     updateProject: tool({

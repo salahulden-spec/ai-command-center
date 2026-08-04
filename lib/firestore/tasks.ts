@@ -11,6 +11,7 @@ import {
   query,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import { deleteLinksTouching } from "./links";
 import { makeConverter } from "./converter";
 import type { Task, TaskStatus, TaskPriority } from "@/types";
 
@@ -77,7 +78,9 @@ export async function updateTask(
   });
 }
 
+/** Takes its relationships with it, so no edge points at nothing. */
 export async function deleteTask(projectId: string | null, taskId: string) {
+  await deleteLinksTouching("task", taskId);
   return deleteDoc(doc(tasksCollection(projectId), taskId));
 }
 
