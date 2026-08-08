@@ -7,6 +7,14 @@
  * than utilities because a node's appearance is driven by data attributes the
  * render loop writes directly, and because `--kc` (the record's type colour) is
  * set inline per node and then read by a dozen declarations below.
+ *
+ * ## One layer, not thirty
+ *
+ * `will-change: transform` sits on `.mv-world` and on nothing inside it. Put it
+ * on every card and the compositor gives each one its own layer, which all have
+ * to be re-rastered — shadow, gradient and text — on every frame the world is
+ * scaled. One promoted layer holding the whole map means panning is a layer
+ * translation, and zooming re-rasters once per scale rather than per card.
  */
 
 .mv-stage {
@@ -48,6 +56,50 @@
   width: 0;
   height: 0;
   transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* ── zone captions ─────────────────────────────────────────────────────── */
+
+/*
+ * The field is divided into regions by type, and each region says what it is
+ * and how much of itself it is showing. This is the thing that turns a scatter
+ * of cards into a composition you can read at a glance without tracing a line.
+ */
+.mv-zone {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  text-align: center;
+  transition: opacity 0.3s ease;
+}
+.mv-zone[data-dim="true"] {
+  opacity: 0.28;
+}
+.mv-zone-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--kc) 86%, var(--foreground));
+}
+.mv-zone-count {
+  margin-top: 2px;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: color-mix(in oklch, var(--muted-foreground) 82%, var(--kc));
 }
 
 /* ── nodes ─────────────────────────────────────────────────────────────── */
@@ -56,13 +108,19 @@
   position: absolute;
   left: 0;
   top: 0;
-  will-change: transform;
   transition: opacity 0.36s ease;
 }
 .mv-hit {
   position: relative;
   transform: translate(-50%, -50%);
   cursor: pointer;
+  transition: transform 0.26s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.mv-node[data-hot="true"] .mv-hit {
+  transform: translate(-50%, -50%) scale(1.03);
+}
+.mv-node[data-selected="true"] .mv-hit {
+  transform: translate(-50%, -50%) scale(1.07);
 }
 
 .mv-card {
@@ -82,16 +140,10 @@
 }
 
 .mv-node[data-dim="true"] {
-  opacity: 0.16;
+  opacity: 0.14;
 }
 .mv-node[data-dim="true"] .mv-hit {
   pointer-events: none;
-}
-.mv-node[data-depth="2"] {
-  opacity: 0.74;
-}
-.mv-node[data-depth="2"] .mv-card {
-  filter: saturate(0.8);
 }
 .mv-node[data-hot="true"] {
   opacity: 1;
@@ -119,6 +171,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.mv-row-lead {
+  align-items: flex-start;
 }
 .mv-ico {
   flex: none;
@@ -149,6 +204,10 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.mv-title-flush {
+  margin: 0;
+  min-width: 0;
+}
 .mv-node[data-done="true"] .mv-title {
   color: var(--muted-foreground);
   text-decoration: line-through;
@@ -160,28 +219,10 @@
   line-height: 1.35;
   color: var(--muted-foreground);
 }
-
-.mv-bar {
-  height: 3px;
-  margin-top: 8px;
-  border-radius: 2px;
-  overflow: hidden;
-  background: color-mix(in oklch, var(--foreground) 10%, transparent);
-}
-.mv-bar > i {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--kc);
-  transition: width 0.5s cubic-bezier(0.2, 0.9, 0.25, 1);
+.mv-flag {
+  color: color-mix(in oklch, var(--kc) 80%, var(--muted-foreground));
 }
 
-.mv-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 7px;
-}
 .mv-chip {
   padding: 2px 6px;
   border-radius: 5px;
@@ -193,23 +234,91 @@
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
-.mv-chip[data-tone="urgent"] {
-  color: var(--destructive);
-  border-color: color-mix(in oklch, var(--destructive) 40%, transparent);
-  background: color-mix(in oklch, var(--destructive) 12%, transparent);
+
+/* Project — the structural record: progress, who is on it, how much is left. */
+.mv-node[data-kind="project"] .mv-card {
+  width: 214px;
+  border-radius: 16px;
 }
-.mv-chip[data-tone="done"] {
-  color: var(--chart-3);
-  border-color: color-mix(in oklch, var(--chart-3) 36%, transparent);
-  background: color-mix(in oklch, var(--chart-3) 10%, transparent);
+.mv-meter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+}
+.mv-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+}
+.mv-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, color-mix(in oklch, var(--kc) 55%, transparent), var(--kc));
+  box-shadow: 0 0 10px -2px var(--kc);
+  transition: width 0.5s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.mv-pct {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklch, var(--kc) 78%, var(--muted-foreground));
+}
+.mv-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mv-faces {
+  display: flex;
+}
+.mv-face {
+  width: 18px;
+  height: 18px;
+  margin-right: -6px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  font-weight: 700;
+  color: var(--background);
+  background: oklch(0.8 0.15 160);
+  border: 1.5px solid var(--card);
+}
+.mv-face-more {
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 14%, var(--card));
+}
+.mv-count {
+  margin-left: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
 }
 
 /* Task — a check rail rather than an icon, so its state reads at a glance. */
 .mv-node[data-kind="task"] .mv-card {
-  width: 178px;
+  width: 186px;
+}
+.mv-node[data-kind="task"] .mv-title {
+  font-size: 11.5px;
+}
+.mv-node[data-kind="task"] .mv-sub {
+  margin-top: 4px;
+  padding-left: 21px;
+  font-size: 9.5px;
 }
 .mv-tick {
   flex: none;
+  margin-top: 1px;
   width: 15px;
   height: 15px;
   border-radius: 4px;
@@ -243,13 +352,21 @@
   align-items: center;
   gap: 8px;
 }
-.mv-node[data-kind="person"] .mv-title {
-  margin: 0;
-  font-size: 12px;
-  -webkit-line-clamp: 1;
-}
+/* One line each, always. A capsule that grows a third line for a long company
+   name changes its own collision box, which layout cannot see — so the column
+   it lives in stops being a column. */
+.mv-node[data-kind="person"] .mv-title,
 .mv-node[data-kind="person"] .mv-sub {
   margin: 0;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mv-node[data-kind="person"] .mv-title {
+  font-size: 12px;
+}
+.mv-node[data-kind="person"] .mv-sub {
   font-size: 9.5px;
 }
 .mv-avatar {
@@ -270,9 +387,12 @@
 
 /* Reminder — a time rail down the leading edge; it breathes when it is late. */
 .mv-node[data-kind="reminder"] .mv-card {
-  width: 172px;
+  width: 180px;
   border-left: 2.5px solid var(--kc);
   border-radius: 5px 13px 13px 5px;
+}
+.mv-node[data-kind="reminder"] .mv-kind {
+  letter-spacing: 0.12em;
 }
 .mv-node[data-kind="reminder"][data-urgent="true"] .mv-card {
   animation: mv-breathe 2.6s ease-in-out infinite;
@@ -291,10 +411,12 @@
   }
 }
 
-/* Knowledge — a folded corner, because it is a page rather than a job. */
+/* Knowledge — a folded corner, because it is a page rather than a job. It also
+   sits quieter than the rest: reference material, not work in flight. */
 .mv-node[data-kind="knowledge"] .mv-card {
-  width: 192px;
+  width: 200px;
   border-radius: 12px;
+  opacity: 0.86;
 }
 .mv-node[data-kind="knowledge"] .mv-card::after {
   content: "";
@@ -311,32 +433,72 @@
   );
 }
 
-/* A noticed gap, not a record: dashed, unfilled, deliberately quieter. */
-.mv-node[data-proposed="true"] .mv-card {
-  background: color-mix(in oklch, var(--card) 55%, transparent);
-  border: 1.5px dashed color-mix(in oklch, var(--kc) 55%, transparent);
-  box-shadow: none;
+/* ── what the workspace noticed ────────────────────────────────────────── */
+
+.mv-notice {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 2.25rem;
+  z-index: 20;
+  width: min(19rem, calc(100% - 1rem));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 12px 10px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklch, var(--kc) 34%, transparent);
+  background: color-mix(in oklch, var(--popover) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow:
+    0 20px 48px -24px oklch(0 0 0 / 1),
+    0 0 26px -18px var(--kc);
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease;
 }
-.mv-proposes {
-  display: block;
-  margin-bottom: 3px;
+.mv-notice:hover {
+  border-color: color-mix(in oklch, var(--kc) 62%, transparent);
+  transform: translateY(-1px);
+}
+.mv-notice-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--font-mono);
   font-size: 8.5px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: color-mix(in oklch, var(--kc) 85%, transparent);
+  color: color-mix(in oklch, var(--kc) 88%, transparent);
+}
+.mv-notice-text {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--foreground);
+}
+.mv-notice-go {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
 }
 
-/* Project — the widest card, footed with its own progress. */
-.mv-node[data-kind="project"] .mv-card {
-  width: 214px;
-  border-radius: 16px;
-}
+/* ── the core ──────────────────────────────────────────────────────────── */
 
-/* You — an orb with halos, so the centre is never mistaken for a record. */
+/*
+ * The centre of the map when you are standing at home. Not a card and not a
+ * portrait: a quiet orb the zones arrange themselves around, so the picture
+ * reads as being about the work rather than about you.
+ */
 .mv-node[data-kind="owner"] .mv-card {
-  width: 138px;
-  height: 138px;
+  width: 146px;
+  height: 146px;
   border-radius: 50%;
   padding: 0;
   display: grid;
@@ -344,17 +506,26 @@
   text-align: center;
   border-color: color-mix(in oklch, var(--kc) 46%, transparent);
   background:
-    radial-gradient(circle at 38% 32%, color-mix(in oklch, var(--kc) 30%, transparent), transparent 62%),
-    radial-gradient(circle at 50% 50%, var(--card), color-mix(in oklch, var(--card) 70%, var(--background)) 74%);
-}
-.mv-node[data-kind="owner"] .mv-row {
-  justify-content: center;
-}
-.mv-node[data-kind="owner"] .mv-kind {
-  margin: 0;
+    radial-gradient(circle at 50% 46%, color-mix(in oklch, var(--kc) 34%, transparent), transparent 58%),
+    radial-gradient(circle at 50% 50%, var(--card), color-mix(in oklch, var(--card) 68%, var(--background)) 76%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 12%, transparent),
+    0 0 70px -18px color-mix(in oklch, var(--kc) 80%, transparent);
 }
 .mv-node[data-kind="owner"] .mv-title {
-  font-size: 14px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: color-mix(in oklch, var(--kc) 88%, var(--foreground));
+}
+.mv-node[data-kind="owner"] .mv-sub {
+  margin-top: 3px;
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
 }
 .mv-halo {
   position: absolute;
@@ -364,6 +535,59 @@
   border-radius: 50%;
   border: 1px solid color-mix(in oklch, var(--kc) 24%, transparent);
   pointer-events: none;
+}
+/* One speck carried round the core on a slow orbit — the only thing on the map
+   that moves without being asked, and the reason the centre reads as live. */
+.mv-orbit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 184px;
+  height: 184px;
+  margin: -92px 0 0 -92px;
+  pointer-events: none;
+  animation: mv-spin 22s linear infinite;
+}
+.mv-orbit::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--kc);
+  box-shadow: 0 0 12px 2px color-mix(in oklch, var(--kc) 70%, transparent);
+}
+.mv-pip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -34px 0 0 -4px;
+  border-radius: 50%;
+  background: var(--kc);
+  box-shadow: 0 0 18px 4px color-mix(in oklch, var(--kc) 60%, transparent);
+  animation: mv-pulse 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes mv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes mv-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
 }
 
 /* The focal record reads as the anchor of the picture. */
@@ -416,6 +640,9 @@
 .mv-world[data-lod="far"] .mv-node[data-kind="person"] .mv-kind {
   display: none;
 }
+.mv-world[data-lod="far"] .mv-node[data-kind="task"] .mv-title {
+  padding-left: 0;
+}
 
 /* ── hover preview ─────────────────────────────────────────────────────── */
 
@@ -444,12 +671,16 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mv-node,
+  .mv-hit,
   .mv-card,
+  .mv-zone,
   .mv-bar > i,
   .mv-preview {
     transition: none;
   }
-  .mv-node[data-kind="reminder"][data-urgent="true"] .mv-card {
+  .mv-node[data-kind="reminder"][data-urgent="true"] .mv-card,
+  .mv-orbit,
+  .mv-pip {
     animation: none;
   }
 }

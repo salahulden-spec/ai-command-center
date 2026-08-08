@@ -42,22 +42,28 @@ import "./mind.css";
 /**
  * Mind View — the workspace as a place you stand in rather than a chart.
  *
- * One record holds the centre. Everything attached to it is arranged around it
- * in sectors by type, and everything attached to *those* fans out one ring
- * further, so opening a project shows its tasks and hints at what those tasks
- * touch. Tap once to read a record, tap again to walk into it.
+ * One record holds the centre; when that record is you, the centre is the AI
+ * core. Everything within two hops is arranged around it in fixed zones by type
+ * — projects above, tasks right, people left, reminders below, knowledge in the
+ * quiet corner — so the composition has the same shape every time you open it
+ * and you learn where to look once.
+ *
+ * What is connected to what is answered by the lines and by focus, not by
+ * position: hovering or selecting a project lights its people, tasks and
+ * reminders wherever they sit and fades everything else. Tap once to read a
+ * record, tap again to walk into it and make it the centre.
  *
  * Three things make it a space rather than a diagram:
  *
- * - **Gravity.** Ring distance is `base + (1 - gravity) * spread`, so an
- *   overdue task sits nearer the centre than a finished one. The picture ranks
- *   itself (lib/mind/spatial.ts).
+ * - **Gravity.** A zone shows the heaviest records it holds and says how many
+ *   it is standing in for, so an overdue task is never the one that got cut
+ *   (lib/mind/spatial.ts).
  * - **Level of detail.** Zoomed out, cards collapse to labelled pills; zoomed
  *   in they open into progress bars and status chips. One node, three
  *   densities.
  * - **A render loop, not transitions.** lib/mind/stage.ts springs positions
- *   toward their targets and writes transforms directly. Nothing here
- *   re-renders at 60fps.
+ *   toward their targets and writes transforms directly — then stops dead once
+ *   they arrive. Nothing here re-renders at 60fps.
  */
 
 const KIND_STYLE: Record<
@@ -77,23 +83,32 @@ const KIND_STYLE: Record<
   },
 };
 
-const SECTOR_STYLE = Object.fromEntries(
-  Object.entries(KIND_STYLE).map(([kind, style]) => [kind, { color: style.color, label: style.plural }])
-) as StageFrame["sectorStyle"];
-
 const FILTER_KINDS: EntityKind[] = ["project", "task", "knowledge", "person", "reminder"];
 const URGENT = "oklch(0.68 0.21 25)";
 /** Pointer travel before a press counts as a pan rather than a tap. */
 const TAP_SLOP = 6;
 /** How many records an attention run walks through. */
 const ATTENTION_LIMIT = 5;
-/** The synthetic id of the dashed observation card. */
-const PROPOSAL_ID = "proposal:focal";
+/** Faces shown on a project card before the rest become a count. */
+const FACES = 3;
+const DAY_MS = 86_400_000;
 
 function initialsOf(label: string): string {
   const parts = label.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "··";
   return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+/** Short, relative, and honest about being late. */
+function whenOf(ts: { toMillis(): number } | null | undefined, now: number): string | null {
+  if (!ts) return null;
+  const days = Math.round((ts.toMillis() - now) / DAY_MS);
+  if (days < -1) return `${-days} days late`;
+  if (days === -1) return "1 day late";
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days <= 14) return `in ${days} days`;
+  return new Date(ts.toMillis()).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 export default function MindPage() {
@@ -166,40 +181,22 @@ export default function MindPage() {
     () => adviceFor(universe, focal, { projects, tasks, people, reminders, memories, now: new Date() }),
     [universe, focal, projects, tasks, people, reminders, memories]
   );
-  const proposal = useMemo<{ entity: Entity; go: string } | null>(() => {
+  const suggestion = useMemo(() => {
     const pick = focalAdvice.find((item) => item.go && universe.byId.has(item.go));
     if (!pick?.go) return null;
-    const target = universe.byId.get(pick.go)!;
-    return {
-      go: pick.go,
-      entity: {
-        id: PROPOSAL_ID,
-        kind: target.kind,
-        recordId: target.recordId,
-        label: pick.text,
-        sublabel: `points at ${target.label}`,
-        urgent: false,
-        done: false,
-        heat: 0,
-      },
-    };
+    return { text: pick.text, go: pick.go, target: universe.byId.get(pick.go)! };
   }, [focalAdvice, universe]);
 
   const spatial = useMemo(
-    () =>
-      layoutNeighbourhood(universe, focal, relations, {
-        showDone,
-        hidden,
-        proposal: proposal?.entity ?? null,
-      }),
-    [universe, focal, relations, showDone, hidden, proposal]
+    () => layoutNeighbourhood(universe, focal, relations, { showDone, hidden }),
+    [universe, focal, relations, showDone, hidden]
   );
 
   const doneCount = useMemo(
     () => relations.reduce((n, g) => n + g.items.filter((e) => e.done).length, 0),
     [relations]
   );
-  const urgentHere = spatial.placed.filter((p) => p.entity.urgent && p.depth === 1).length;
+  const urgentHere = spatial.placed.filter((p) => p.entity.urgent && p.depth > 0).length;
 
   /** Every connection between two records that are both on screen. */
   const edges = useMemo(() => {
@@ -237,8 +234,8 @@ export default function MindPage() {
   const frame = useMemo<StageFrame>(
     () => ({
       placed: spatial.placed,
-      sectors: spatial.sectors,
-      extent: spatial.extent,
+      extentX: spatial.extentX,
+      extentY: spatial.extentY,
       edges,
       colors: new Map(
         spatial.placed.map((p) => [
@@ -246,7 +243,6 @@ export default function MindPage() {
           p.entity.urgent && !p.entity.done ? URGENT : KIND_STYLE[p.entity.kind].color,
         ])
       ),
-      sectorStyle: SECTOR_STYLE,
     }),
     [spatial, edges]
   );
@@ -264,6 +260,33 @@ export default function MindPage() {
 
   useEffect(() => stage.start(), [stage]);
 
+  // --- record lookups, for the detail a card shows ------------------------
+  // Re-read whenever the records do. A due label only ever has to be right
+  // relative to the data it is describing, and reading the clock during render
+  // would make the component non-idempotent.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const now = useMemo(() => new Date().getTime(), [tasks, reminders]);
+  const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+  const taskById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const reminderById = useMemo(() => new Map(reminders.map((r) => [r.id, r])), [reminders]);
+  const tasksByProject = useMemo(() => {
+    const map = new Map<string, { total: number; done: number }>();
+    for (const task of tasks) {
+      if (!task.projectId) continue;
+      const entry = map.get(task.projectId) ?? { total: 0, done: 0 };
+      entry.total++;
+      if (task.status === "done") entry.done++;
+      map.set(task.projectId, entry);
+    }
+    return map;
+  }, [tasks]);
+
+  /** Contacts attached to a record, for the faces on a project card. */
+  const peopleOn = (entityId: string) =>
+    [...(universe.edges.get(entityId) ?? [])]
+      .map((id) => universe.byId.get(id))
+      .filter((e): e is Entity => e?.kind === "person");
+
   // --- travelling --------------------------------------------------------
   const travelTo = (id: string) => {
     if (!universe.byId.has(id)) return;
@@ -276,12 +299,6 @@ export default function MindPage() {
   };
 
   const tapNode = (id: string) => {
-    if (id === PROPOSAL_ID) {
-      if (proposal) {
-        setSelectedId(proposal.go);
-      }
-      return;
-    }
     if (id === focalId) {
       if (trail.length > 1) travelTo(trail[trail.length - 2]);
       return;
@@ -474,6 +491,123 @@ export default function MindPage() {
     />
   );
 
+  /** The inside of one card. Every type gets its own silhouette and its own facts. */
+  const cardBody = (entity: Entity) => {
+    const style = KIND_STYLE[entity.kind];
+    const Icon = style.icon;
+
+    if (entity.kind === "owner") {
+      return (
+        <>
+          <span className="mv-halo" style={{ width: 184, height: 184 }} />
+          <span className="mv-halo" style={{ width: 232, height: 232, opacity: 0.5 }} />
+          <span className="mv-orbit" />
+          <span className="mv-pip" />
+          <h3 className="mv-title">AI Core</h3>
+          <p className="mv-sub">{universe.byId.size - 1} records</p>
+        </>
+      );
+    }
+
+    if (entity.kind === "project") {
+      const project = projectById.get(entity.recordId);
+      const counts = tasksByProject.get(entity.recordId);
+      const faces = peopleOn(entity.id);
+      const pct = Math.max(0, Math.min(100, project?.progress ?? 0));
+      return (
+        <>
+          <div className="mv-row">
+            <span className="mv-ico">
+              <Icon className="h-3.5 w-3.5" />
+            </span>
+            <span className="mv-kind">{project?.status ?? "project"}</span>
+          </div>
+          <h3 className="mv-title">{entity.label}</h3>
+          <div className="mv-meter mv-lod-1">
+            <span className="mv-bar">
+              <i style={{ width: `${pct}%` }} />
+            </span>
+            <span className="mv-pct">{pct}%</span>
+          </div>
+          <div className="mv-foot mv-lod-2">
+            {faces.length > 0 && (
+              <span className="mv-faces">
+                {faces.slice(0, FACES).map((person) => (
+                  <span key={person.id} className="mv-face" title={person.label}>
+                    {initialsOf(person.label)}
+                  </span>
+                ))}
+                {faces.length > FACES && <span className="mv-face mv-face-more">+{faces.length - FACES}</span>}
+              </span>
+            )}
+            <span className="mv-count">
+              {counts ? `${counts.done}/${counts.total} tasks` : "no tasks"}
+            </span>
+          </div>
+        </>
+      );
+    }
+
+    if (entity.kind === "task") {
+      const task = taskById.get(entity.recordId);
+      const due = whenOf(task?.dueDate, now);
+      return (
+        <>
+          <div className="mv-row mv-row-lead">
+            <span className="mv-tick">
+              <Check className="h-2.5 w-2.5" strokeWidth={4} />
+            </span>
+            <h3 className="mv-title mv-title-flush">{entity.label}</h3>
+          </div>
+          <p className="mv-sub mv-lod-1">
+            {due ?? task?.status ?? entity.sublabel}
+            {task?.priority === "high" && <span className="mv-flag"> · high</span>}
+          </p>
+        </>
+      );
+    }
+
+    if (entity.kind === "person") {
+      return (
+        <>
+          <span className="mv-avatar">{initialsOf(entity.label)}</span>
+          <div className="min-w-0">
+            <h3 className="mv-title">{entity.label}</h3>
+            <p className="mv-sub mv-lod-1">{entity.sublabel}</p>
+          </div>
+        </>
+      );
+    }
+
+    if (entity.kind === "reminder") {
+      const reminder = reminderById.get(entity.recordId);
+      return (
+        <>
+          <div className="mv-row">
+            <span className="mv-ico">
+              <Icon className="h-3.5 w-3.5" />
+            </span>
+            <span className="mv-kind">{whenOf(reminder?.dueAt, now) ?? entity.sublabel}</span>
+          </div>
+          <h3 className="mv-title">{entity.label}</h3>
+        </>
+      );
+    }
+
+    return (
+      <>
+        <div className="mv-row">
+          <span className="mv-ico">
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <span className="mv-kind">{style.label}</span>
+        </div>
+        <h3 className="mv-title">{entity.label}</h3>
+        <p className="mv-sub mv-lod-1">{entity.sublabel}</p>
+      </>
+    );
+  };
+
   return (
     <div className="flex h-[calc(100dvh-8.5rem)] flex-col gap-2 md:h-[calc(100dvh-3rem)]">
       {/* ── header ───────────────────────────────────────────────────── */}
@@ -552,7 +686,7 @@ export default function MindPage() {
                   className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ backgroundColor: KIND_STYLE[entity.kind].color }}
                 />
-                {entity.label}
+                {entity.kind === "owner" ? "AI Core" : entity.label}
               </button>
             </span>
           );
@@ -578,7 +712,7 @@ export default function MindPage() {
               onPointerUp={endPress}
               onPointerCancel={endPress}
               onPointerLeave={() => setHoverId(null)}
-              onWheel={(e) => stage.zoomBy(Math.exp(-e.deltaY * 0.0016))}
+              onWheel={(e) => stage.zoomAt(Math.exp(-e.deltaY * 0.0016), e.clientX, e.clientY)}
               onDoubleClick={(e) => {
                 const id = idFromEvent(e);
                 if (id) travelTo(id);
@@ -587,20 +721,40 @@ export default function MindPage() {
               <canvas ref={netRef} className="mv-net" />
 
               <div ref={worldRef} className="mv-world" data-lod="near">
+                {/* Zone captions: which region of the field holds what. */}
+                {spatial.zones.map((zone) => {
+                  const style = KIND_STYLE[zone.kind];
+                  const Icon = style.icon;
+                  return (
+                    <div
+                      key={zone.kind}
+                      className="mv-zone"
+                      data-dim={!!attentionSet || !!highlightSet}
+                      style={{
+                        transform: `translate(${zone.x}px, ${zone.y}px)`,
+                        ["--kc" as string]: style.color,
+                      }}
+                    >
+                      <span className="mv-zone-name">
+                        <Icon className="h-3 w-3" />
+                        {style.plural}
+                      </span>
+                      <span className="mv-zone-count">
+                        {zone.shown < zone.count ? `${zone.shown} of ${zone.count}` : zone.count}
+                      </span>
+                    </div>
+                  );
+                })}
+
                 {spatial.placed.map((p) => {
                   const entity = p.entity;
                   const style = KIND_STYLE[entity.kind];
-                  const Icon = style.icon;
                   const urgent = entity.urgent && !entity.done;
-                  const degree = (universe.edges.get(entity.id)?.size ?? 1) - 1;
-                  const proposed = p.proposed === true;
-                  const dim = proposed
-                    ? false
-                    : attentionSet
-                      ? !attentionSet.has(entity.id) && entity.id !== focalId
-                      : highlightSet
-                        ? !highlightSet.has(entity.id) && entity.id !== focalId
-                        : false;
+                  const dim = attentionSet
+                    ? !attentionSet.has(entity.id) && entity.id !== focalId
+                    : highlightSet
+                      ? !highlightSet.has(entity.id) && entity.id !== focalId
+                      : false;
                   return (
                     <div
                       key={entity.id}
@@ -611,82 +765,16 @@ export default function MindPage() {
                       data-depth={p.depth}
                       data-done={entity.done}
                       data-urgent={urgent}
-                      data-proposed={proposed}
                       data-selected={selectedId === entity.id}
                       data-hot={highlightSet ? highlightSet.has(entity.id) : false}
                       data-dim={dim}
                       style={{ ["--kc" as string]: urgent ? URGENT : style.color }}
                     >
                       <div className="mv-hit">
-                        <div className="mv-card">
-                          {proposed && <span className="mv-proposes">Noticed</span>}
-                          {proposed ? (
-                            <div className="mv-row">
-                              <span className="mv-ico">
-                                <Sparkles className="h-3.5 w-3.5" />
-                              </span>
-                              <span className="mv-kind">Go there</span>
-                            </div>
-                          ) : entity.kind === "task" ? (
-                            <div className="mv-row">
-                              <span className="mv-tick">
-                                <Check className="h-2.5 w-2.5" strokeWidth={4} />
-                              </span>
-                              <span className="mv-kind">{entity.sublabel}</span>
-                            </div>
-                          ) : entity.kind === "person" ? (
-                            <>
-                              <span className="mv-avatar">{initialsOf(entity.label)}</span>
-                              <div className="min-w-0">
-                                <h3 className="mv-title">{entity.label}</h3>
-                                <p className="mv-sub mv-lod-1">{entity.sublabel}</p>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="mv-row">
-                              <span className="mv-ico">
-                                <Icon className="h-3.5 w-3.5" />
-                              </span>
-                              <span className="mv-kind">
-                                {entity.kind === "owner" ? "" : style.label}
-                              </span>
-                            </div>
-                          )}
-
-                          {(proposed || entity.kind !== "person") && (
-                            <>
-                              <h3 className="mv-title">{entity.label}</h3>
-                              <p className="mv-sub mv-lod-1">{entity.sublabel}</p>
-                            </>
-                          )}
-
-                          {!proposed && entity.kind !== "owner" && entity.kind !== "person" && (
-                            <div className="mv-chips mv-lod-2">
-                              {urgent && (
-                                <span className="mv-chip" data-tone="urgent">
-                                  urgent
-                                </span>
-                              )}
-                              {entity.done && (
-                                <span className="mv-chip" data-tone="done">
-                                  done
-                                </span>
-                              )}
-                              {degree > 0 && <span className="mv-chip">{degree} linked</span>}
-                            </div>
-                          )}
-
-                          {entity.kind === "owner" && (
-                            <>
-                              <span className="mv-halo" style={{ width: 174, height: 174 }} />
-                              <span
-                                className="mv-halo"
-                                style={{ width: 212, height: 212, opacity: 0.5 }}
-                              />
-                            </>
-                          )}
-                        </div>
-                        {p.depth === 0 && <span className="mv-here">you are here</span>}
+                        <div className="mv-card">{cardBody(entity)}</div>
+                        {p.depth === 0 && entity.kind !== "owner" && (
+                          <span className="mv-here">you are here</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -740,8 +828,8 @@ export default function MindPage() {
           {!loading && spatial.placed.length <= 1 && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-center">
               <p className="max-w-xs text-sm text-muted-foreground">
-                Nothing connects to {focal.label} yet. Assign someone or add a task and it appears
-                here immediately.
+                Nothing connects to {focal.kind === "owner" ? "you" : focal.label} yet. Assign
+                someone or add a task and it appears here immediately.
               </p>
             </div>
           )}
@@ -788,6 +876,31 @@ export default function MindPage() {
                 </span>
               </div>
             </div>
+          )}
+
+          {/*
+            What the workspace has noticed about where you are standing. It
+            lives on the frame rather than in the field: it is a remark about
+            the map, not a thing on it, and a card floating among the records
+            has to be told apart from them every time you look.
+          */}
+          {!loading && suggestion && !attention && (
+            <button
+              type="button"
+              className="mv-notice"
+              onClick={() => setSelectedId(suggestion.go)}
+              style={{ ["--kc" as string]: KIND_STYLE[suggestion.target.kind].color }}
+            >
+              <span className="mv-notice-tag">
+                <Sparkles className="h-3 w-3" />
+                Noticed
+              </span>
+              <span className="mv-notice-text">{suggestion.text}</span>
+              <span className="mv-notice-go">
+                Open {suggestion.target.label}
+                <ChevronRight className="h-3 w-3" />
+              </span>
+            </button>
           )}
 
           {/* ── attention run ──────────────────────────────────────── */}
