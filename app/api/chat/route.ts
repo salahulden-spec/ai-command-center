@@ -1,4 +1,5 @@
 import { streamText, convertToModelMessages, tool, type UIMessage } from "ai";
+import { ASSISTANT_MODEL } from "@/lib/ai/model";
 import { z } from "zod";
 import { verifyOwnerIdToken } from "@/lib/firebase/verify-id-token";
 import { loadWorkspaceSnapshot } from "@/lib/assistant/context";
@@ -310,7 +311,7 @@ export async function POST(req: Request) {
   }
 
   const result = streamText({
-    model: "anthropic/claude-sonnet-4.6",
+    model: ASSISTANT_MODEL,
     system: buildSystemPrompt(snapshot),
     messages: await convertToModelMessages(messages),
     tools,

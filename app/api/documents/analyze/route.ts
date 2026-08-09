@@ -1,4 +1,5 @@
 import { generateObject } from "ai";
+import { ASSISTANT_MODEL } from "@/lib/ai/model";
 import { z } from "zod";
 import { verifyOwnerIdToken } from "@/lib/firebase/verify-id-token";
 
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
   const body: { text?: string; fileUrl?: string; mediaType?: string } = await req.json();
 
   const { object } = await generateObject({
-    model: "anthropic/claude-sonnet-4.6",
+    model: ASSISTANT_MODEL,
     schema: resultSchema,
     messages: [
       {

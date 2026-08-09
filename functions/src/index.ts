@@ -34,6 +34,16 @@ const REMINDER_EMAIL = "salahulden@gmail.com";
  */
 const TIME_ZONE = "Asia/Muscat";
 
+/**
+ * Which model the briefings run on. Keep in step with ASSISTANT_MODEL in
+ * lib/ai/model.ts — this is a separate npm package and cannot import it.
+ *
+ * The gateway's free tier serves no Anthropic model, so the previous
+ * `anthropic/claude-sonnet-4.6` returned 403 and both briefings had been
+ * failing silently on their schedule.
+ */
+const MODEL = "google/gemini-2.5-flash";
+
 /** The owner's wall clock, not the container's. */
 function inOwnerZone(date: Date): string {
   return date.toLocaleString("en-US", {
@@ -262,7 +272,7 @@ export const dailyBriefing = onSchedule(
       "(none)";
 
     const { text } = await generateText({
-      model: "anthropic/claude-sonnet-4.6",
+      model: MODEL,
       system:
         "You write a short, practical morning briefing for a single user's personal AI operating system. Be concise — a few sentences plus short bullet highlights, not an exhaustive list. Prioritize what matters most today. Plain, direct tone, no fluff.",
       prompt: `Today's date: ${ownerDate(new Date())}\n\nOpen tasks:\n${taskLines}\n\nPending reminders:\n${reminderLines}\n\nActive projects:\n${projectLines}\n\nWrite today's briefing.`,
@@ -317,7 +327,7 @@ export const weeklyReview = onSchedule(
       "(none)";
 
     const { text } = await generateText({
-      model: "anthropic/claude-sonnet-4.6",
+      model: MODEL,
       system:
         "You write a short weekly review for a single user's personal AI operating system, looking back at the past 7 days. Highlight what got done, notable decisions, and active project momentum. A few short paragraphs or bullet groups, not exhaustive. Plain, direct tone.",
       prompt: `Week ending: ${ownerDate(new Date())}\n\nTasks completed this week:\n${doneLines}\n\nDecisions made this week:\n${decisionLines}\n\nResearch logged this week:\n${researchLines}\n\nActive projects:\n${projectLines}\n\nWrite this week's review.`,

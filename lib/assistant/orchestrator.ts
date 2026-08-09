@@ -1,4 +1,5 @@
 import { embed, generateText, tool, stepCountIs, type ModelMessage } from "ai";
+import { ASSISTANT_MODEL } from "@/lib/ai/model";
 import { z } from "zod";
 import { adminDb, AdminFieldValue, AdminTimestamp } from "@/lib/firebase/admin";
 import { ASSISTANT_TIME_ZONE, zonedTimeToUtc } from "./timezone";
@@ -722,7 +723,7 @@ export async function runAssistantCommand(
   const messages: ModelMessage[] = [...history, { role: "user", content: message }];
 
   const { text } = await generateText({
-    model: "anthropic/claude-sonnet-4.6",
+    model: ASSISTANT_MODEL,
     system: buildSystemPrompt(snapshot),
     messages,
     tools: buildTools(aiMode),
