@@ -13,6 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { DESTRUCTIVE_ACTIONS } from "@/lib/assistant/destructive";
+import { zonedTimeToUtc } from "@/lib/assistant/timezone";
 import { auth } from "@/lib/firebase/client";
 import { Markdown } from "@/components/chat/markdown";
 import { useAuth } from "@/hooks/use-auth";
@@ -482,7 +483,11 @@ function ChatConversation({
                   dueAt: string;
                   relatedPersonIds?: string[];
                 };
-                const ref = await createReminder({ text, dueAt: new Date(dueAt) });
+                // Not `new Date(dueAt)`: a bare wall-clock string is parsed in
+                // *this browser's* zone, which is only the owner's zone by
+                // luck. The model was told the time in ASSISTANT_TIME_ZONE, so
+                // that is the zone its answer is written in.
+                const ref = await createReminder({ text, dueAt: zonedTimeToUtc(dueAt) });
                 createdId = ref.id;
                 for (const personId of relatedPersonIds ?? []) {
                   await createLink("person", personId, "reminder", ref.id);
@@ -523,7 +528,7 @@ function ChatConversation({
                   ...(title ? { title } : {}),
                   ...(status ? { status } : {}),
                   ...(priority ? { priority } : {}),
-                  ...(dueDate ? { dueDate: Timestamp.fromDate(new Date(dueDate)) } : {}),
+                  ...(dueDate ? { dueDate: Timestamp.fromDate(zonedTimeToUtc(dueDate)) } : {}),
                 });
               } else if (mutationType === "updateProject") {
                 const { projectId, status, progress, description } = mutationPayload as {

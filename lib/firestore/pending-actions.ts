@@ -10,6 +10,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import { zonedTimeToUtc } from "@/lib/assistant/timezone";
 import { makeConverter } from "./converter";
 import type { PendingAction, PendingActionType } from "@/types";
 import { createProject, updateProject, deleteProject } from "./projects";
@@ -80,7 +81,12 @@ export async function approvePendingAction(action: PendingAction) {
         dueAt: string;
         relatedPersonIds?: string[];
       };
-      const ref = await createReminder({ text, dueAt: new Date(dueAt) });
+      // The queued payload carries the model's bare wall-clock string, so the
+      // conversion happens here — in the owner's zone, not the approving
+      // browser's. Without this, a reminder from Telegram landed at one time
+      // when auto-execute applied it on the server and another when the same
+      // request was approved from the web app.
+      const ref = await createReminder({ text, dueAt: zonedTimeToUtc(dueAt) });
       for (const personId of relatedPersonIds ?? []) {
         await createLink("person", personId, "reminder", ref.id);
       }
@@ -126,7 +132,7 @@ export async function approvePendingAction(action: PendingAction) {
         ...(title ? { title } : {}),
         ...(status ? { status } : {}),
         ...(priority ? { priority } : {}),
-        ...(dueDate ? { dueDate: Timestamp.fromDate(new Date(dueDate)) } : {}),
+        ...(dueDate ? { dueDate: Timestamp.fromDate(zonedTimeToUtc(dueDate)) } : {}),
       });
       break;
     }

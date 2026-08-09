@@ -1,14 +1,14 @@
 import { embed, generateText, tool, stepCountIs, type ModelMessage } from "ai";
 import { z } from "zod";
 import { adminDb, AdminFieldValue, AdminTimestamp } from "@/lib/firebase/admin";
-import { zonedTimeToUtc } from "./timezone";
+import { ASSISTANT_TIME_ZONE, zonedTimeToUtc } from "./timezone";
 import { loadWorkspaceSnapshot } from "./context";
 import { CAPTURE_POLICY } from "./capture-policy";
 import { isDestructive } from "./destructive";
 import { loadThread, appendTurns, clearThread, type Turn } from "./thread";
 import type { AiMode, PendingActionType } from "@/types";
 
-const TIMEZONE = process.env.ASSISTANT_TIMEZONE || "UTC";
+const TIMEZONE = ASSISTANT_TIME_ZONE;
 
 /** Keeps replies text-message length instead of essay length. */
 const MAX_OUTPUT_TOKENS = 400;

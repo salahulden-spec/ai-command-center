@@ -22,6 +22,42 @@ const AI_GATEWAY_API_KEY = defineSecret("AI_GATEWAY_API_KEY");
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
 const REMINDER_EMAIL = "salahulden@gmail.com";
 
+/**
+ * The owner's own zone, mirroring ASSISTANT_TIMEZONE in the web app's env.
+ *
+ * Cloud Functions run in UTC, so anything formatted with a bare
+ * `toLocaleString()` states a time the owner never asked for — a reminder due
+ * at 9am read "Due: 5:00 AM" in the email that delivered it. It is a literal
+ * rather than a param because `onSchedule`'s `timeZone` is resolved at deploy
+ * time, and because a wrong-but-silent default is the failure being fixed
+ * here. Keep it in step with ASSISTANT_TIMEZONE.
+ */
+const TIME_ZONE = "Asia/Muscat";
+
+/** The owner's wall clock, not the container's. */
+function inOwnerZone(date: Date): string {
+  return date.toLocaleString("en-US", {
+    timeZone: TIME_ZONE,
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * The owner's calendar date. Muscat is four hours ahead of the container, so
+ * for the last four hours of every day a UTC `toDateString()` names yesterday
+ * — and a briefing that opens with the wrong date is worse than one with none.
+ */
+function ownerDate(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    timeZone: TIME_ZONE,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 // Firestore triggers (Eventarc) aren't supported in me-central2, the region
 // this project's Firestore database lives in — real-time Firestore-triggered
 // functions simply cannot be created against this database. Polling on a
@@ -133,9 +169,17 @@ export const pollTaskWorkflows = onSchedule(
 );
 
 /**
- * Runs every 5 minutes: finds pending reminders whose dueAt has passed and
+ * Runs every minute: finds pending reminders whose dueAt has passed and
  * that haven't been emailed yet, and sends one email per reminder via
- * Resend. `notifiedAt` (set right after a successful send) is what stops a
+ * Resend.
+ *
+ * The poll interval is the delivery error. At five minutes, a reminder set for
+ * 9:00 arrived any time up to 9:05 — close enough to look like a bug and
+ * impossible to tell apart from one. A minute is the finest `onSchedule`
+ * offers, and the query is a single equality read on a collection this app
+ * will never fill, so the extra runs cost effectively nothing.
+ *
+ * `notifiedAt` (set right after a successful send) is what stops a
  * reminder from being emailed again on the next poll — status stays
  * "pending" until the user marks it done themselves, since receiving the
  * email isn't the same as having handled it.
@@ -145,7 +189,7 @@ export const pollTaskWorkflows = onSchedule(
  * same approach as weeklyReview below.
  */
 export const sendDueReminderEmails = onSchedule(
-  { schedule: "every 5 minutes", region: FUNCTION_REGION, secrets: [RESEND_API_KEY] },
+  { schedule: "every 1 minutes", region: FUNCTION_REGION, secrets: [RESEND_API_KEY] },
   async () => {
     const now = Timestamp.now();
     const pendingSnap = await db.collection("reminders").where("status", "==", "pending").get();
@@ -167,7 +211,7 @@ export const sendDueReminderEmails = onSchedule(
           from: "AI Command Center <onboarding@resend.dev>",
           to: REMINDER_EMAIL,
           subject: `Reminder: ${text}`,
-          text: `${text}\n\nDue: ${(snap.data().dueAt as Timestamp).toDate().toLocaleString()}`,
+          text: `${text}\n\nDue: ${inOwnerZone((snap.data().dueAt as Timestamp).toDate())}`,
         });
         await snap.ref.update({ notifiedAt: FieldValue.serverTimestamp() });
       } catch (err) {
@@ -186,15 +230,17 @@ async function saveBriefing(type: "daily" | "weekly", content: string) {
 }
 
 /**
- * Runs every day at 7am ET. Pulls today's open tasks, pending reminders, and
- * active projects, then asks the model to write a short morning briefing.
- * Adjust the `schedule`/`timeZone` below if 7am ET isn't the right time —
- * this was a reasonable default, not a confirmed user preference.
+ * Runs every day at 7am, the owner's time. Pulls today's open tasks, pending
+ * reminders, and active projects, then asks the model to write a short morning
+ * briefing.
+ *
+ * It used to run at 7am America/New_York, which is mid-afternoon in Muscat —
+ * a "morning briefing" that arrived after the day it was briefing about.
  */
 export const dailyBriefing = onSchedule(
   {
     schedule: "0 7 * * *",
-    timeZone: "America/New_York",
+    timeZone: TIME_ZONE,
     region: FUNCTION_REGION,
     secrets: [AI_GATEWAY_API_KEY],
     timeoutSeconds: 120,
@@ -209,7 +255,7 @@ export const dailyBriefing = onSchedule(
     const taskLines = openTasksSnap.docs.map((d) => `- ${d.data().title}`).join("\n") || "(none)";
     const reminderLines =
       pendingRemindersSnap.docs
-        .map((d) => `- ${d.data().text} (due ${(d.data().dueAt as Timestamp).toDate().toLocaleString()})`)
+        .map((d) => `- ${d.data().text} (due ${inOwnerZone((d.data().dueAt as Timestamp).toDate())})`)
         .join("\n") || "(none)";
     const projectLines =
       activeProjectsSnap.docs.map((d) => `- ${d.data().name}: ${d.data().progress ?? 0}% complete`).join("\n") ||
@@ -219,7 +265,7 @@ export const dailyBriefing = onSchedule(
       model: "anthropic/claude-sonnet-4.6",
       system:
         "You write a short, practical morning briefing for a single user's personal AI operating system. Be concise — a few sentences plus short bullet highlights, not an exhaustive list. Prioritize what matters most today. Plain, direct tone, no fluff.",
-      prompt: `Today's date: ${new Date().toDateString()}\n\nOpen tasks:\n${taskLines}\n\nPending reminders:\n${reminderLines}\n\nActive projects:\n${projectLines}\n\nWrite today's briefing.`,
+      prompt: `Today's date: ${ownerDate(new Date())}\n\nOpen tasks:\n${taskLines}\n\nPending reminders:\n${reminderLines}\n\nActive projects:\n${projectLines}\n\nWrite today's briefing.`,
     });
 
     await saveBriefing("daily", text);
@@ -227,13 +273,14 @@ export const dailyBriefing = onSchedule(
 );
 
 /**
- * Runs every Monday at 8am ET. Reviews what actually happened in the last 7
- * days (completed tasks, decisions, research) rather than what's pending.
+ * Runs every Monday at 8am, the owner's time. Reviews what actually happened in
+ * the last 7 days (completed tasks, decisions, research) rather than what's
+ * pending.
  */
 export const weeklyReview = onSchedule(
   {
     schedule: "0 8 * * 1",
-    timeZone: "America/New_York",
+    timeZone: TIME_ZONE,
     region: FUNCTION_REGION,
     secrets: [AI_GATEWAY_API_KEY],
     timeoutSeconds: 120,
@@ -273,7 +320,7 @@ export const weeklyReview = onSchedule(
       model: "anthropic/claude-sonnet-4.6",
       system:
         "You write a short weekly review for a single user's personal AI operating system, looking back at the past 7 days. Highlight what got done, notable decisions, and active project momentum. A few short paragraphs or bullet groups, not exhaustive. Plain, direct tone.",
-      prompt: `Week ending: ${new Date().toDateString()}\n\nTasks completed this week:\n${doneLines}\n\nDecisions made this week:\n${decisionLines}\n\nResearch logged this week:\n${researchLines}\n\nActive projects:\n${projectLines}\n\nWrite this week's review.`,
+      prompt: `Week ending: ${ownerDate(new Date())}\n\nTasks completed this week:\n${doneLines}\n\nDecisions made this week:\n${decisionLines}\n\nResearch logged this week:\n${researchLines}\n\nActive projects:\n${projectLines}\n\nWrite this week's review.`,
     });
 
     await saveBriefing("weekly", text);

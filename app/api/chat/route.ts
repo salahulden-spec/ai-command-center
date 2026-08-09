@@ -4,7 +4,7 @@ import { verifyOwnerIdToken } from "@/lib/firebase/verify-id-token";
 import { loadWorkspaceSnapshot } from "@/lib/assistant/context";
 import { CAPTURE_POLICY } from "@/lib/assistant/capture-policy";
 
-const TIMEZONE = process.env.ASSISTANT_TIMEZONE || "UTC";
+import { ASSISTANT_TIME_ZONE as TIMEZONE } from "@/lib/assistant/timezone";
 
 const tools = {
   createProject: tool({
@@ -35,7 +35,11 @@ const tools = {
     description: "Create a reminder for the user at a specific date and time.",
     inputSchema: z.object({
       text: z.string().describe("What to remind the user about"),
-      dueAt: z.string().describe("ISO 8601 date-time when the reminder is due"),
+      dueAt: z
+        .string()
+        .describe(
+          'ISO 8601 local date-time with no timezone suffix (e.g. "2026-08-01T09:00:00"), in the user\'s own wall-clock time'
+        ),
       relatedPersonIds: z
         .array(z.string())
         .default([])
@@ -250,10 +254,20 @@ const tools = {
 };
 
 function buildSystemPrompt(snapshot: string) {
-  const now = new Date();
+  // In the user's own zone, not the server's. This runs on Vercel, where the
+  // process clock is UTC — telling the model "it is 08:20" when the user's
+  // clock says 12:20 makes every relative time ("in two hours", "this
+  // evening") land hours off, which is invisible until a reminder fires at
+  // the wrong moment. The same line in orchestrator.ts has always been zoned;
+  // this one was not.
+  const local = new Date().toLocaleString("en-US", {
+    timeZone: TIMEZONE,
+    dateStyle: "full",
+    timeStyle: "short",
+  });
   return `You are the assistant inside AI Command Center, the user's private executive assistant app.
-The current date and time is ${now.toISOString()} (${now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}). Use this as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "next Friday") — never guess or assume a different year.
-When creating a reminder, output dueAt as a plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), reflecting the user's own wall-clock time, not UTC.
+The current date and time is ${local} (zone: ${TIMEZONE}) — this is the user's own wall clock. Use it as the reference point for any relative date/time the user mentions (e.g. "tomorrow", "in two hours", "next Friday") — never guess or assume a different year, and never convert to or reason in UTC.
+When a tool asks for a date-time, output plain ISO 8601 local date-time without a timezone suffix (e.g. "2026-07-19T09:00:00"), in that same wall-clock time.
 You can create and update projects, tasks, reminders, and people (contacts), and mark tasks/reminders complete.
 
 Here is the user's live workspace right now:
