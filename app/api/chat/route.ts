@@ -316,5 +316,15 @@ export async function POST(req: Request) {
     tools,
   });
 
-  return result.toUIMessageStreamResponse();
+  // A failure inside the stream still returns HTTP 200, and the SDK's default
+  // is to replace it with the word "error" — so the chat says "An error
+  // occurred", the log shows a green 200, and there is nothing anywhere to
+  // read. This is a private app with one user, who is also the person who has
+  // to fix it: log the cause, and tell them what it was.
+  return result.toUIMessageStreamResponse({
+    onError: (error) => {
+      console.error("[chat] stream failed:", error);
+      return error instanceof Error ? error.message : String(error);
+    },
+  });
 }
