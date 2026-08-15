@@ -1,4 +1,5 @@
 import { runAssistantCommand } from "@/lib/assistant/orchestrator";
+import { describeFailure } from "@/lib/assistant/failure";
 
 interface TelegramUpdate {
   message?: {
@@ -85,7 +86,7 @@ export async function POST(req: Request) {
     return Response.json({
       method: "sendMessage",
       chat_id: chatId,
-      text: "Something went wrong on my end — try again in a moment.",
+      text: describeFailure(err),
     });
   }
 }

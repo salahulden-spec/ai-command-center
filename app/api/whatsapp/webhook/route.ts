@@ -1,4 +1,5 @@
 import { runAssistantCommand } from "@/lib/assistant/orchestrator";
+import { describeFailure } from "@/lib/assistant/failure";
 import { verifyMetaSignature } from "@/lib/whatsapp/meta-signature";
 import { sendMetaWhatsAppMessage } from "@/lib/whatsapp/meta-send";
 
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
     await sendMetaWhatsAppMessage(message.from, reply);
   } catch (err) {
     console.error("WhatsApp command failed:", err);
-    await sendMetaWhatsAppMessage(message.from, "Something went wrong on my end — try again in a moment.");
+    await sendMetaWhatsAppMessage(message.from, describeFailure(err));
   }
 
   // Meta expects a fast 200 regardless of how the reply above went — it
